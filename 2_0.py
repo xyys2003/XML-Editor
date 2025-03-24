@@ -142,6 +142,7 @@ class OpenGLWidget(QOpenGLWidget):
             
             # 其他OpenGL初始化
             glEnable(GL_DEPTH_TEST)
+            glDepthFunc(GL_LEQUAL)  # 使用小于等于比较
             glClearColor(0.1, 0.1, 0.1, 1.0)
             glEnable(GL_LIGHTING)
             glEnable(GL_LIGHT0)
@@ -179,156 +180,298 @@ class OpenGLWidget(QOpenGLWidget):
         self.check_camera_consistency()
 
     def paintGL(self):
-        """绘制前确保相机配置最新"""
+        """绘制OpenGL场景"""
+        # 清除缓冲区
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
         
-        # 设置相机 - 使用配置中的相机参数
+        # 设置相机
         eye_pos = self.camera_config['position']
         gluLookAt(*eye_pos, *self._camera_target, 0, 0, 1)
         
-        # 绘制无限网格（先于坐标轴）
+        # 1. 绘制基础场景元素
+        # 绘制无限网格（在坐标轴之前）
         self.draw_infinite_grid()
-        # 绘制无限坐标轴（后于网格）
+        # 绘制无限坐标轴（在网格之后）
         self.draw_infinite_axes()
         
-        # 首先绘制所有非选中物体
+        # 2. 绘制非选中物体
         for geo in self.geometries:
-            if isinstance(geo, GeometryGroup):
-                # 绘制组及其子对象
-                self._draw_group_recursive(geo)
-            else:
-                # 直接绘制几何体
+            if geo != self.selected_geo:
+                # 绘制几何体
                 self.draw_geometry(geo)
+                # 绘制包围盒
+                self.draw_aabb(geo)
         
+        # 3. 绘制选中物体（带特效）
+        if self.selected_geo:
+            # 3.1 绘制选中物体的轮廓
+            self.draw_outline(self.selected_geo)
+            
+            # 3.2 绘制半透明的选中物体
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            self.draw_geometry(self.selected_geo, alpha=0.4)
+            glDisable(GL_BLEND)
+            
+            # 3.3 绘制高亮的包围盒
+            self.draw_aabb(self.selected_geo, highlight=True)
+            
+            # 3.4 绘制右上方悬浮坐标系
+            self.draw_floating_gizmo(self.selected_geo)
+            
+            # 3.5 在非观察模式下绘制变换控制器
+            if self.current_mode != OperationMode.MODE_OBSERVE:
+                self.draw_gizmo()
+        
+        # 4. 绘制调试信息（如果有）
+        # 绘制射线（如果存在）
         if self.ray_origin is not None:
             self._draw_ray()
-
-        # 绘制网格参考线
+        
+        # 5. 绘制网格参考线
         glBegin(GL_LINES)
-        glColor3f(0.4,0.4,0.4)
+        glColor3f(0.4, 0.4, 0.4)
         for x in range(-10, 11):
-            glVertex3f(x,0,-10); glVertex3f(x,0,10)
+            glVertex3f(x, 0, -10)
+            glVertex3f(x, 0, 10)
         for z in range(-10, 11):
-            glVertex3f(-10,0,z); glVertex3f(10,0,z)
+            glVertex3f(-10, 0, z)
+            glVertex3f(10, 0, z)
         glEnd()
-
-        # 绘制拖放预览
+        
+        # 6. 绘制拖放预览（如果正在进行拖放操作）
         if hasattr(self, 'drag_preview') and self.drag_preview.get('active') and self.drag_preview.get('position') is not None:
             self._draw_drag_preview()
 
     def draw_geometry(self, geo, alpha=1.0, parent_transform=None):
-        """绘制几何体，考虑父组的变换"""
-        # 保存当前矩阵状态
+        """绘制几何体"""
+        if not geo:  # 增加空值保护
+            return
+        
         glPushMatrix()
         
-        # 如果有父变换，先应用父变换
+        # 如果有父级变换矩阵，先应用它
         if parent_transform is not None:
-            # 将 4x4 变换矩阵转换为 OpenGL 可用的格式
-            gl_matrix = parent_transform.T.flatten()  # 转置并展平
-            glMultMatrixf(gl_matrix)
+            glMultMatrixf(parent_transform.T.flatten())
         
         # 应用几何体自身的变换
-        gl_matrix = geo.transform_matrix.T.flatten()
-        glMultMatrixf(gl_matrix)
+        glTranslatef(*geo.position)
+        glRotatef(geo.rotation[0], 1, 0, 0)
+        glRotatef(geo.rotation[1], 0, 1, 0)
+        glRotatef(geo.rotation[2], 0, 0, 1)
         
-        # 如果是组，递归绘制所有子对象
-        if geo.type == "group":
-            for child in geo.children:
-                self.draw_geometry(child, alpha, None)  # 子对象已包含在组变换中
+        # 设置颜色和材质
+        if hasattr(geo, 'material') and hasattr(geo.material, 'color') and len(geo.material.color) >= 3:
+            r, g, b = geo.material.color[:3]
         else:
-            # 原来的几何体绘制代码...
-            # 获取材质颜色
-            r, g, b = geo.material.color[:3] if hasattr(geo, 'material') else (0.7, 0.7, 0.7)
-            
-            # 设置材质
-            glMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, [r, g, b, alpha])
-            
-            # 根据几何体类型绘制不同形状
-            if geo.type == GeometryType.BOX:
-                # 绘制立方体 - 使用 size 作为半长半宽半高
-                glScalef(geo.size[0], geo.size[1], geo.size[2])
-                glutSolidCube(2.0)  # 尺寸为2的立方体
-            
-            # 其他几何体类型的绘制代码...
+            r, g, b = 0.7, 0.7, 0.7  # 默认灰色
         
-        # 恢复矩阵状态
+        # 设置颜色和透明度
+        glColor4f(r, g, b, alpha)
+        
+        # 应用材质属性
+        if hasattr(geo, 'material'):
+            glMaterialfv(GL_FRONT, GL_DIFFUSE, [r, g, b, alpha])
+            glMaterialfv(GL_FRONT, GL_SPECULAR, geo.material.specular)
+            glMaterialf(GL_FRONT, GL_SHININESS, geo.material.shininess)
+        
+        # Mujoco的size是半长半宽半高，绘制时需要乘以2
+        mujoco_size = geo.size * 2.0  # 调整尺寸
+        
+        # 根据几何体类型绘制
+        if geo.type == GeometryType.BOX:
+            # 绘制立方体
+            glScalef(*mujoco_size)  # 使用调整后的尺寸
+            glutSolidCube(1.0)  # 单位立方体
+            
+        elif geo.type == GeometryType.SPHERE:
+            # 绘制球体 - 直接使用原始size，因为它是半径
+            glutSolidSphere(geo.size[0], 32, 32)
+            
+        elif geo.type == GeometryType.ELLIPSOID:
+            # 绘制椭球体 - 三个轴的半径
+            glScalef(*geo.size)  # 使用原始size
+            glutSolidSphere(1.0, 32, 32)  # 单位球体
+            
+        elif geo.type == GeometryType.CYLINDER:
+            # 绘制圆柱体 - 半径和全高
+            radius = geo.size[0]
+            height = geo.size[1] * 2  # 全高
+            glRotatef(90, 1, 0, 0)  # 旋转使Z轴朝上
+            glutSolidCylinder(radius, height, 32, 32)
+            
+        elif geo.type == GeometryType.CAPSULE:
+            # 绘制胶囊体
+            radius = geo.size[0]
+            half_height = geo.size[1]
+            
+            # 创建二次曲面对象
+            quad = gluNewQuadric()
+            
+            # 绘制圆柱体部分
+            glPushMatrix()
+            glTranslatef(0, 0, -half_height)  # 移到圆柱体底部
+            glRotatef(90, 1, 0, 0)  # 旋转使主轴沿Z方向
+            gluCylinder(quad, radius, radius, 2 * half_height, 32, 32)
+            glPopMatrix()
+            
+            # 绘制底部半球
+            glPushMatrix()
+            glTranslatef(0, 0, -half_height)
+            glRotatef(-90, 1, 0, 0)
+            gluSphere(quad, radius, 32, 32)
+            glPopMatrix()
+            
+            # 绘制顶部半球
+            glPushMatrix()
+            glTranslatef(0, 0, half_height)
+            glRotatef(90, 1, 0, 0)
+            gluSphere(quad, radius, 32, 32)
+            glPopMatrix()
+            
+            # 删除二次曲面对象
+            gluDeleteQuadric(quad)
+            
+        elif geo.type == GeometryType.PLANE:
+            # 绘制平面 - 使用调整后的尺寸
+            glScalef(mujoco_size[0], mujoco_size[1], mujoco_size[2])
+            glutSolidCube(1.0)  # 缩放的立方体表示平面
+        
+        # 如果是选中状态，绘制轮廓
+        if hasattr(geo, 'selected') and geo.selected:
+            self.draw_outline(geo)
+        
         glPopMatrix()
 
     def draw_gizmo(self):
-        """绘制当前选中对象的变换工具"""
-        if self.selected_geo is None:
+        """绘制选中物体的变换工具"""
+        if not self.selected_geo:
             return
         
-        # 无论是几何体还是组，都绘制变换工具
-        position = self.selected_geo.position
-        
-        # 设置变换矩阵（考虑父组的变换）
-        if hasattr(self.selected_geo, 'get_world_transform'):
-            transform = self.selected_geo.get_world_transform()
-            position = transform[:3, 3]  # 获取世界位置
-        
-        # 根据操作模式绘制不同的工具
-        if self.operation_mode == OperationMode.MODE_TRANSLATE:
-            self._draw_translate_gizmo(position)
-        elif self.operation_mode == OperationMode.MODE_ROTATE:
-            self._draw_rotate_gizmo(position)
-        elif self.operation_mode == OperationMode.MODE_SCALE:
-            self._draw_scale_gizmo(position)
+        try:
+            # 获取物体位置
+            position = np.array(self.selected_geo.position, dtype=np.float32)
+            
+            # 计算坐标轴长度（根据相机距离动态调整）
+            camera_pos = np.array(self.camera_config.get('position', [0, 0, 0]), dtype=np.float32)
+            distance = np.linalg.norm(camera_pos - position)
+            axis_length = distance * 0.15  # 轴长为相机距离的15%
+            
+            # 保存当前矩阵状态
+            glPushMatrix()
+            
+            # 移动到物体位置
+            glTranslatef(position[0], position[1], position[2])
+            
+            # 设置线宽
+            glLineWidth(3.0)
+            
+            # 禁用深度测试，确保坐标轴总是可见
+            glDisable(GL_DEPTH_TEST)
+            
+            # 绘制X轴（红色）
+            glBegin(GL_LINES)
+            glColor3f(1.0, 0.0, 0.0)  # 红色
+            glVertex3f(0.0, 0.0, 0.0)
+            glVertex3f(axis_length, 0.0, 0.0)
+            glEnd()
+            
+            # 绘制Y轴（绿色）
+            glBegin(GL_LINES)
+            glColor3f(0.0, 1.0, 0.0)  # 绿色
+            glVertex3f(0.0, 0.0, 0.0)
+            glVertex3f(0.0, axis_length, 0.0)
+            glEnd()
+            
+            # 绘制Z轴（蓝色）
+            glBegin(GL_LINES)
+            glColor3f(0.0, 0.0, 1.0)  # 蓝色
+            glVertex3f(0.0, 0.0, 0.0)
+            glVertex3f(0.0, 0.0, axis_length)
+            glEnd()
+            
+            # 绘制轴端小球，以提高可见性
+            if self.current_mode != OperationMode.MODE_OBSERVE:
+                radius = axis_length * 0.05  # 球体半径
+                
+                # X轴球体
+                glPushMatrix()
+                glTranslatef(axis_length, 0, 0)
+                glColor3f(1.0, 0.0, 0.0)
+                glutSolidSphere(radius, 8, 8)
+                glPopMatrix()
+                
+                # Y轴球体
+                glPushMatrix()
+                glTranslatef(0, axis_length, 0)
+                glColor3f(0.0, 1.0, 0.0)
+                glutSolidSphere(radius, 8, 8)
+                glPopMatrix()
+                
+                # Z轴球体
+                glPushMatrix()
+                glTranslatef(0, 0, axis_length)
+                glColor3f(0.0, 0.0, 1.0)
+                glutSolidSphere(radius, 8, 8)
+                glPopMatrix()
+            
+            # 恢复深度测试
+            glEnable(GL_DEPTH_TEST)
+            
+            # 恢复线宽
+            glLineWidth(1.0)
+            
+            # 恢复矩阵状态
+            glPopMatrix()
+            
+        except Exception as e:
+            print(f"绘制变换工具时出错: {str(e)}")
 
     def mousePressEvent(self, event):
-        """处理鼠标按下事件，增强悬浮坐标系检测"""
-        self.last_mouse_pos = event.pos()
-        
-        # 左键操作
+        """处理鼠标按下事件"""
         if event.button() == Qt.LeftButton:
+            self.drag_start_pos = event.pos()
             self.left_button_pressed = True
             
-            # 在进行射线投射前确保相机配置最新
-            self.update_camera_config()
-            
+            # 检查是否有物体被点击
             try:
-                # 首先，检查是否点击了悬浮坐标系
+                # 首先检查是否点击了变换轴或悬浮坐标系（仅当已有选中物体时）
                 if self.selected_geo:
+                    # 检查悬浮坐标系
                     self.active_axis = self.detect_floating_axis(event.pos())
                     if self.active_axis:
-                        print(f"选中悬浮坐标系 {self.active_axis} 轴")
                         self._dragging_floating_gizmo = True
                         self.dragging = True
                         return
+                        
+                    # 检查变换轴
+                    if self.current_mode != OperationMode.MODE_OBSERVE:
+                        self.active_axis = self.detect_axis(event.pos())
+                        if self.active_axis:
+                            self.dragging = True
+                            return
                 
-                # 没有点击到悬浮坐标系
-                self._dragging_floating_gizmo = False
-                
-                # 检测是否点击了变换轴
-                if self.current_mode != OperationMode.MODE_OBSERVE and self.selected_geo:
-                    self.active_axis = self.detect_axis(event.pos())
-                    if self.active_axis:
-                        self.dragging = True
-                        return
-                
-                # 检测是否点击了物体
+                # 没有点击到变换工具，尝试选择新物体
                 geo = self.pick_object(event.pos())
+                
+                # 添加调试信息
+                print(f"选中物体检测结果: {geo.name if geo else 'None'}")
+                
                 if geo:
-                    # 点击到物体，仅执行选择操作，不进行视角平移
+                    # 点击到了物体，设置为选中状态
                     self.set_selection(geo)
                     self.is_dragging_view = False
                 else:
-                    # 点击空白处，取消当前选中并准备进行视角平移
+                    # 点击空白处，取消选中
                     self.set_selection(None)
-                    
-                    # 清除射线和碰撞点数据
-                    self.ray_origin = None
-                    self.ray_direction = None
-                    self.ray_hit_point = None
-                    
                     self.is_dragging_view = True
-                
+            
             except Exception as e:
-                print(f"鼠标事件处理错误: {str(e)}")
-                # 出错时设为视角平移模式
-                self.is_dragging_view = True
-                self.active_axis = None
+                print(f"鼠标点击选择处理出错: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                self.is_dragging_view = True  # 出错时默认为视角拖动
         
         # 右键操作 - 准备旋转视角
         elif event.button() == Qt.RightButton:
@@ -452,22 +595,32 @@ class OpenGLWidget(QOpenGLWidget):
         self.update()  # 触发重绘
 
     def set_selection(self, geo):
-        """设置当前选中的几何体或组"""
-        # 更新选中状态
-        if self.selected_geo:
-            self.selected_geo.selected = False
-        
-        self.selected_geo = geo
-        
-        if geo:
-            geo.selected = True
-        
-        # 发出选择变更信号
-        self.selection_changed.emit(geo)
-        
-        # 重绘场景
-        self.update()
-    
+        """设置当前选中的几何体"""
+        try:
+            # 如果之前有选中的物体，取消其选中状态
+            if self.selected_geo:
+                self.selected_geo.selected = False
+                
+            self.selected_geo = geo
+            
+            # 设置新选中物体的状态
+            if geo:
+                geo.selected = True
+                print(f"已选中物体: {geo.name}")
+            else:
+                print("已取消选中")
+                
+            # 发出选择变更信号
+            self.selection_changed.emit(geo)
+            
+            # 更新显示
+            self.update()
+            
+        except Exception as e:
+            print(f"设置选中物体时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
     def handle_camera_rotate(self, dx, dy):
         """相机旋转 - 更新球坐标参数"""
         self._camera_phi += dx * 0.3
@@ -478,36 +631,26 @@ class OpenGLWidget(QOpenGLWidget):
         self.update_camera_config()
 
     def pick_object(self, mouse_pos: QPoint):
-        """基于鼠标点击位置进行物体选择"""
-        try:
-            ray_origin, ray_direction = self._get_mouse_ray(mouse_pos)
-            
-            # 创建场景视图查询
-            closest_hit = float('inf')
-            closest_obj = None
-            
-            # 遍历所有几何体
-            for geo in self.geometries:
-                # 如果是组，递归检查组内的几何体，但不选择组本身
-                if geo.type == "group":
-                    result = self._pick_in_group(geo, ray_origin, ray_direction)
-                    # 确保结果是有效的元组
-                    if result and isinstance(result, tuple) and len(result) == 2:
-                        obj, distance = result
-                        if obj and distance < closest_hit:
-                            closest_hit = distance
-                            closest_obj = obj
-                else:
-                    # 检查直接的碰撞（未分组的几何体）
-                    hit, distance = self._check_geometry_hit(geo, ray_origin, ray_direction)
-                    if hit and distance < closest_hit:
-                        closest_hit = distance
-                        closest_obj = geo
-            
-            return closest_obj
-        except Exception as e:
-            print(f"鼠标事件处理错误: {str(e)}")
-            return None
+        """拾取物体"""
+        # 转换鼠标位置为OpenGL窗口坐标
+        result = self.raycaster.cast_ray((mouse_pos.x(), mouse_pos.y()))
+        
+        if result:
+            # 更新射线数据
+            self.ray_origin = result.ray_origin
+            self.ray_direction = result.ray_direction
+            self.ray_hit_point = result.world_position if result.geometry else None
+        else:
+            # 如果射线投射没有结果，清除射线数据
+            self.ray_origin = None
+            self.ray_direction = None
+            self.ray_hit_point = None
+        
+        if result and result.geometry:
+            print(f"选中物体：{result.geometry.name} | 碰撞点：{result.world_position}")
+            return result.geometry
+        
+        return None
 
     def _pick_in_group(self, group, ray_origin, ray_direction, transform=None):
         """递归检查组内几何体，返回(命中对象, 距离)元组"""
@@ -545,43 +688,95 @@ class OpenGLWidget(QOpenGLWidget):
 
     def _check_geometry_hit(self, geo, ray_origin, ray_direction, transform=None):
         """检查射线与几何体的交点"""
-        # 如果transform为None，使用默认变换矩阵
-        if transform is None:
-            transform = np.eye(4)
-        
-        # 应用变换矩阵
-        transformed_ray_origin = transform[:3, :3] @ ray_origin + transform[:3, 3]
-        transformed_ray_direction = transform[:3, :3] @ ray_direction
-        
-        # 检查射线与几何体的交点
-        hit_result = None
-        
-        if geo.type == GeometryType.BOX:
-            hit_result = self.raycaster.ray_box_intersection(
-                transformed_ray_origin, transformed_ray_direction, geo.position, geo.size, 
-                euler_angles_to_matrix(np.radians(geo.rotation))[:3, :3])
-        elif geo.type == GeometryType.SPHERE:
-            hit_result = self.raycaster.ray_sphere_intersection(
-                transformed_ray_origin, transformed_ray_direction, geo.position, geo.size,
-                euler_angles_to_matrix(np.radians(geo.rotation))[:3, :3])
-        elif geo.type == GeometryType.CYLINDER:
-            hit_result = self.raycaster.ray_cylinder_intersection(
-                transformed_ray_origin, transformed_ray_direction, geo.position, geo.size,
-                euler_angles_to_matrix(np.radians(geo.rotation))[:3, :3])
-        elif geo.type == GeometryType.ELLIPSOID:
-            hit_result = self.raycaster.ray_ellipsoid_intersection(
-                transformed_ray_origin, transformed_ray_direction, geo.position, geo.size,
-                euler_angles_to_matrix(np.radians(geo.rotation))[:3, :3])
-        elif geo.type == GeometryType.CAPSULE:
-            hit_result = self.raycaster.ray_capsule_intersection(
-                transformed_ray_origin, transformed_ray_direction, geo.position, geo.size,
-                euler_angles_to_matrix(np.radians(geo.rotation))[:3, :3])
-        elif geo.type == GeometryType.PLANE:
-            hit_result = self.raycaster.ray_plane_intersection(
-                transformed_ray_origin, transformed_ray_direction, geo.position, geo.size,
-                euler_angles_to_matrix(np.radians(geo.rotation))[:3, :3])
-        
-        return hit_result is not None and hit_result[3] > 0, hit_result[3] if hit_result is not None else float('inf')
+        try:
+            # 验证输入参数
+            if ray_origin is None or ray_direction is None:
+                print("射线参数无效")
+                return None
+                
+            if any(np.isnan(ray_origin)) or any(np.isnan(ray_direction)):
+                print("射线包含NaN值")
+                return None
+                
+            # 获取物体的变换矩阵
+            if transform is not None:
+                world_transform = transform
+            elif hasattr(geo, 'get_world_transform'):
+                world_transform = geo.get_world_transform()
+            else:
+                world_transform = geo.transform_matrix
+                
+            # 验证变换矩阵
+            if any(np.isnan(world_transform.flatten())):
+                print(f"{geo.name}的世界变换矩阵包含NaN值")
+                return None
+                
+            # 计算射线在物体局部空间中的表示
+            try:
+                inv_transform = np.linalg.inv(world_transform)
+            except np.linalg.LinAlgError:
+                print(f"{geo.name}的变换矩阵不可逆")
+                return None
+                
+            # 变换射线原点到局部空间
+            local_origin_homo = np.append(ray_origin, 1.0)
+            local_origin_homo = inv_transform @ local_origin_homo
+            local_origin = local_origin_homo[:3] / local_origin_homo[3]
+            
+            # 变换射线方向（只旋转，不平移）
+            local_direction = inv_transform[:3, :3] @ ray_direction
+            local_direction = local_direction / np.linalg.norm(local_direction)
+            
+            # 根据几何体类型计算相交
+            hit_distance = float('inf')
+            
+            if geo.type == GeometryType.BOX:
+                # 立方体的大小是半长半宽半高
+                bounds_min = -np.ones(3)  # 局部空间中的边界
+                bounds_max = np.ones(3)
+                
+                # 计算每个轴上的交点参数
+                t_min = np.zeros(3)
+                t_max = np.zeros(3)
+                
+                for i in range(3):
+                    if abs(local_direction[i]) < 1e-6:
+                        # 射线与该轴平行
+                        if local_origin[i] < bounds_min[i] or local_origin[i] > bounds_max[i]:
+                            return None  # 射线在盒子外且平行于某个面
+                        t_min[i] = -float('inf')
+                        t_max[i] = float('inf')
+                    else:
+                        inv_dir = 1.0 / local_direction[i]
+                        t1 = (bounds_min[i] - local_origin[i]) * inv_dir
+                        t2 = (bounds_max[i] - local_origin[i]) * inv_dir
+                        
+                        if t1 > t2:
+                            t_min[i], t_max[i] = t2, t1
+                        else:
+                            t_min[i], t_max[i] = t1, t2
+                
+                # 找到最大的t_min和最小的t_max
+                t_enter = np.max(t_min)
+                t_exit = np.min(t_max)
+                
+                # 有效的交点
+                if t_enter <= t_exit and t_exit >= 0:
+                    hit_t = t_enter if t_enter >= 0 else t_exit
+                    hit_distance = hit_t
+            
+            # 其他几何体类型的相交测试...
+            
+            if hit_distance < float('inf'):
+                return geo, hit_distance
+            
+            return None
+            
+        except Exception as e:
+            print(f"检查几何体碰撞时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
 
     
         # 在OpenGLWidget类中添加
@@ -1098,151 +1293,132 @@ class OpenGLWidget(QOpenGLWidget):
         glEnable(GL_LIGHTING)
 
     def detect_axis(self, mouse_pos):
-        """检测鼠标是否点击了变换轴（带错误处理）"""
+        """检测鼠标是否点击到了变换轴"""
+        # 首先检查是否有选中的物体
         if not self.selected_geo:
             return None
-
+            
         try:
-            # 获取屏幕上变换轴的位置
-            obj_pos_3d = self.selected_geo.position
-            
-            # 获取相机参数
-            view_matrix = self.camera_config['view'].copy()  # 使用副本避免引用问题
-            projection_matrix = self.camera_config['projection'].copy()
-            
-            # 确保使用标准的视口格式
-            viewport = self.camera_config['viewport']  # 直接使用配置中的视口
-            
-            # 可选的调试输出
-            # print(f"使用视口: {viewport}")
-            
-            # 从NumPy数组转换为Python列表，避免类型问题
-            obj_pos_3d_list = [float(obj_pos_3d[0]), float(obj_pos_3d[1]), float(obj_pos_3d[2])]
-            view_matrix_list = view_matrix.flatten().tolist()
-            projection_matrix_list = projection_matrix.flatten().tolist()
-            
-            # 使用try-except捕获可能的投影错误
-            try:
-                # 将物体位置转换为屏幕坐标
-                obj_pos_2d = gluProject(
-                    obj_pos_3d_list[0], obj_pos_3d_list[1], obj_pos_3d_list[2],
-                    view_matrix_list, projection_matrix_list, viewport
-                )
-            except Exception as e:
-                print(f"物体位置投影失败: {e}")
-                return None
-            
-            # 检测轴的点击
-            mouse_x, mouse_y = mouse_pos.x(), self.height() - mouse_pos.y()
-            center_x, center_y = obj_pos_2d[0], obj_pos_2d[1]
-            
-            # 计算各轴在屏幕上的终点
-            axis_length = 1.5  # 与绘制的轴长度保持一致
-            
-            # 安全的投影函数
-            def safe_project(x, y, z):
-                try:
-                    return gluProject(float(x), float(y), float(z), 
-                                     view_matrix_list, projection_matrix_list, viewport)
-                except Exception as e:
-                    print(f"轴端点投影失败 ({x}, {y}, {z}): {e}")
-                    # 返回一个默认值，避免程序崩溃
-                    return (center_x, center_y, 0.5)
-            
-            # X轴（红色）
-            x_end_3d = (obj_pos_3d[0] + axis_length, obj_pos_3d[1], obj_pos_3d[2])
-            x_end_2d = safe_project(x_end_3d[0], x_end_3d[1], x_end_3d[2])
-            
-            # Y轴（绿色）
-            y_end_3d = (obj_pos_3d[0], obj_pos_3d[1] + axis_length, obj_pos_3d[2])
-            y_end_2d = safe_project(y_end_3d[0], y_end_3d[1], y_end_3d[2])
-            
-            # Z轴（蓝色）
-            z_end_3d = (obj_pos_3d[0], obj_pos_3d[1], obj_pos_3d[2] + axis_length)
-            z_end_2d = safe_project(z_end_3d[0], z_end_3d[1], z_end_3d[2])
-            
-            # 检测鼠标是否接近某个轴线
-            threshold = 15.0  # 增大像素距离阈值，提高选择的容忍度
-            
-            # 检测点到线段的距离
-            def point_to_line_dist(p, l1, l2):
-                # 计算点到线段的距离
-                x, y = p
-                x1, y1 = l1
-                x2, y2 = l2
-                
-                # 线段长度的平方
-                l2_sq = (x2 - x1)**2 + (y2 - y1)**2
-                
-                # 如果线段长度为0或太小，直接返回点到端点的距离
-                if l2_sq < 0.00001:
-                    return np.sqrt((x - x1)**2 + (y - y1)**2)
-                
-                # 计算投影比例 t
-                t = max(0, min(1, ((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / l2_sq))
-                
-                # 计算投影点
-                proj_x = x1 + t * (x2 - x1)
-                proj_y = y1 + t * (y2 - y1)
-                
-                # 返回点到投影点的距离
-                return np.sqrt((x - proj_x)**2 + (y - proj_y)**2)
-            
-            # 计算鼠标到各轴的距离
-            dist_to_x = point_to_line_dist(
-                (mouse_x, mouse_y), 
-                (center_x, center_y), 
-                (x_end_2d[0], x_end_2d[1])
-            )
-            
-            dist_to_y = point_to_line_dist(
-                (mouse_x, mouse_y), 
-                (center_x, center_y), 
-                (y_end_2d[0], y_end_2d[1])
-            )
-            
-            dist_to_z = point_to_line_dist(
-                (mouse_x, mouse_y), 
-                (center_x, center_y), 
-                (z_end_2d[0], z_end_2d[1])
-            )
-            
-            # 返回距离最近且在阈值内的轴
-            min_dist = min(dist_to_x, dist_to_y, dist_to_z)
-            
-            # 调试输出
-            # print(f"距离: X={dist_to_x:.2f}, Y={dist_to_y:.2f}, Z={dist_to_z:.2f}, 阈值={threshold}")
-            
-            if min_dist > threshold:
-                return None
-            
-            if min_dist == dist_to_x:
-                return 'x'
-            elif min_dist == dist_to_y:
-                return 'y'
+            # 获取变换轴的根部位置（物体的位置）
+            if hasattr(self.selected_geo, 'position'):
+                axis_origin = np.array(self.selected_geo.position, dtype=np.float32)
             else:
+                print("警告：选中物体没有position属性")
+                return None
+                
+            # 获取变换轴的长度（根据模式和相机距离调整）
+            camera_pos = np.array(self.camera_config.get('position', [0, 0, 0]), dtype=np.float32)
+            distance = np.linalg.norm(camera_pos - axis_origin)
+            axis_length = distance * 0.15  # 根据相机距离调整轴长
+            
+            # 定义三个坐标轴的端点
+            axis_end_x = axis_origin + np.array([axis_length, 0, 0], dtype=np.float32)
+            axis_end_y = axis_origin + np.array([0, axis_length, 0], dtype=np.float32)
+            axis_end_z = axis_origin + np.array([0, 0, axis_length], dtype=np.float32)
+            
+            # 获取当前视图和投影矩阵
+            try:
+                modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
+                projection = glGetDoublev(GL_PROJECTION_MATRIX)
+                viewport = glGetIntegerv(GL_VIEWPORT)
+            except Exception as e:
+                print(f"获取OpenGL矩阵失败: {str(e)}")
+                return None
+                
+            # 投影函数
+            def safe_project(point):
+                try:
+                    # 将3D点投影到屏幕空间
+                    screen_point = gluProject(point[0], point[1], point[2], 
+                                            modelview, projection, viewport)
+                    return np.array([screen_point[0], screen_point[1]], dtype=np.float32)
+                except Exception as e:
+                    print(f"投影失败: {str(e)}")
+                    return None
+            
+            # 投影原点和三个轴端点到屏幕空间
+            origin_screen = safe_project(axis_origin)
+            
+            if origin_screen is None:
+                print("原点投影失败")
+                return None
+            
+            # 投影各轴端点
+            x_screen = safe_project(axis_end_x)
+            y_screen = safe_project(axis_end_y)
+            z_screen = safe_project(axis_end_z)
+            
+            if x_screen is None or y_screen is None or z_screen is None:
+                print("坐标轴端点投影失败")
+                return None
+                
+            # 获取鼠标位置
+            mouse_point = np.array([mouse_pos.x(), mouse_pos.y()], dtype=np.float32)
+            
+            # 计算点到线的距离函数
+            def point_to_line_dist(point, line_start, line_end):
+                if np.array_equal(line_start, line_end):
+                    return np.linalg.norm(point - line_start)
+                    
+                line_vec = line_end - line_start
+                point_vec = point - line_start
+                line_len = np.linalg.norm(line_vec)
+                line_unit_vec = line_vec / line_len
+                
+                # 计算投影长度
+                proj_len = np.dot(point_vec, line_unit_vec)
+                
+                # 如果投影点在线段外，返回到端点的距离
+                if proj_len < 0:
+                    return np.linalg.norm(point - line_start)
+                elif proj_len > line_len:
+                    return np.linalg.norm(point - line_end)
+                    
+                # 计算投影点
+                proj_point = line_start + line_unit_vec * proj_len
+                return np.linalg.norm(point - proj_point)
+            
+            # 检测鼠标是否接近任何一个坐标轴
+            threshold = 15  # 像素阈值
+            
+            # 检查X轴
+            if point_to_line_dist(mouse_point, origin_screen, x_screen) < threshold:
+                return 'x'
+                
+            # 检查Y轴
+            if point_to_line_dist(mouse_point, origin_screen, y_screen) < threshold:
+                return 'y'
+                
+            # 检查Z轴
+            if point_to_line_dist(mouse_point, origin_screen, z_screen) < threshold:
                 return 'z'
+                
+            return None
             
         except Exception as e:
-            # 捕获所有可能的异常，避免程序崩溃
-            print(f"轴检测出错: {str(e)}")
+            print(f"检测坐标轴时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def handle_axis_drag(self, dx, dy):
-        """处理坐标轴拖动，根据操作模式选择处理方法"""
-        if self.selected_geo is None or self.active_axis is None:
-            return
-        
-        # 根据当前操作模式选择处理方法
-        if self.operation_mode == OperationMode.MODE_TRANSLATE:
-            self._handle_translate_drag(dx, dy)
-        elif self.operation_mode == OperationMode.MODE_ROTATE:
-            self._handle_rotate_drag(dx, dy)
-        elif self.operation_mode == OperationMode.MODE_SCALE:
-            self._handle_scale_drag(dx, dy)
-        
-        # 更新视图
-        self.update()
+        """处理坐标轴拖动"""
+        try:
+            # 使用 current_mode 而不是 operation_mode
+            if self.current_mode == OperationMode.MODE_TRANSLATE:
+                self._handle_translate_drag(dx, dy)
+            elif self.current_mode == OperationMode.MODE_ROTATE:
+                self._handle_rotate_drag(dx, dy)
+            elif self.current_mode == OperationMode.MODE_SCALE:
+                self._handle_scale_drag(dx, dy)
+                
+            # 更新显示
+            self.update()
+            
+        except Exception as e:
+            print(f"处理轴拖动时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def _handle_translate_drag(self, dx, dy):
         """处理平移拖拽，支持组和子物体一起移动"""
@@ -1716,39 +1892,65 @@ class OpenGLWidget(QOpenGLWidget):
         }
 
     def _get_mouse_ray(self, mouse_pos):
-        """获取鼠标位置的射线（起点和方向）"""
+        """获取从相机通过鼠标点的射线"""
         try:
-            # 确保鼠标位置是正确的格式
-            if isinstance(mouse_pos, tuple) or isinstance(mouse_pos, list):
-                x, y = mouse_pos[0], mouse_pos[1]
-            else:  # 假定是 QPoint
-                x, y = mouse_pos.x(), mouse_pos.y()
-            
-            # 屏幕坐标转换为OpenGL坐标
-            y = self.height() - y  # 翻转Y坐标
-            
-            # 获取OpenGL矩阵
+            # 获取当前的视口、模型视图矩阵和投影矩阵
             viewport = glGetIntegerv(GL_VIEWPORT)
             modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
             projection = glGetDoublev(GL_PROJECTION_MATRIX)
             
-            # 计算近点和远点
+            # 获取鼠标点在视口中的坐标
+            x = float(mouse_pos.x())
+            y = float(viewport[3] - mouse_pos.y())  # 翻转Y坐标
+            
+            print(f"视口: {viewport}")
+            print(f"鼠标坐标: ({x}, {y})")
+            
             try:
-                near_point = np.array(gluUnProject(x, y, 0.0, modelview, projection, viewport))
-                far_point = np.array(gluUnProject(x, y, 1.0, modelview, projection, viewport))
+                # 获取近平面和远平面上的点
+                near_point = gluUnProject(x, y, 0.0, modelview, projection, viewport)
+                far_point = gluUnProject(x, y, 1.0, modelview, projection, viewport)
                 
+                if near_point is None or far_point is None:
+                    print("警告: gluUnProject返回None")
+                    return None, None
+                    
+                # 转换为numpy数组
+                near_point = np.array(near_point, dtype=np.float32)
+                far_point = np.array(far_point, dtype=np.float32)
+                
+                # 检查结果有效性
+                if any(np.isnan(near_point)) or any(np.isnan(far_point)):
+                    print(f"警告: 投影结果包含NaN值, 近点: {near_point}, 远点: {far_point}")
+                    return None, None
+                    
+                print(f"近点: {near_point}")
+                print(f"远点: {far_point}")
+                    
                 # 计算射线方向
                 ray_direction = far_point - near_point
-                ray_direction = ray_direction / np.linalg.norm(ray_direction)
+                ray_length = np.linalg.norm(ray_direction)
+                
+                # 归一化方向向量
+                if ray_length < 1e-6:
+                    print(f"警告: 射线长度太小: {ray_length}")
+                    return None, None
+                    
+                ray_direction = ray_direction / ray_length
                 
                 return near_point, ray_direction
+                
             except Exception as e:
-                print(f"坐标转换错误: {e}")
-                return None
-        
+                print(f"UnProject计算出错: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                return None, None
+                
         except Exception as e:
-            print(f"获取鼠标射线错误: {str(e)}")
-            return None
+            print(f"获取鼠标射线时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None, None
 
     def _handle_floating_axis_drag(self, dx, dy):
         """处理悬浮坐标系拖拽，利用轴方向移动物体"""
