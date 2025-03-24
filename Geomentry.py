@@ -239,17 +239,28 @@ class GeometryGroup(QObject):
     
     def _update_children_transforms(self):
         """更新所有子对象的变换，传播变换矩阵到子项"""
+        # 确保我们有最新的自身变换矩阵
+        if not hasattr(self, 'transform_matrix'):
+            self._update_transform()
+        
         # 对每个子对象处理
         for child in self.children:
-            if hasattr(child, 'type'):
-                if child.type == "group":
-                    # 如果子对象是组，递归更新
-                    child._update_transform()  # 更新子组自身的变换矩阵
-                    child._update_children_transforms()  # 递归更新子组的子项
-                else:
-                    # 如果子对象是几何体，更新其变换矩阵
-                    if hasattr(child, '_update_transform'):
-                        child._update_transform()
+            # 首先更新子对象自身的局部变换矩阵
+            if hasattr(child, '_update_transform'):
+                child._update_transform()
+            
+            # 将子对象的局部变换矩阵与父级(this)的变换矩阵相乘
+            # 这样可以获得子对象从局部坐标到世界坐标的完整变换
+            if hasattr(child, 'transform_matrix'):
+                # 保存原始的局部变换矩阵
+                local_transform = child.transform_matrix.copy()
+                
+                # 计算世界变换矩阵 = 父级变换 * 局部变换
+                child.transform_matrix = np.dot(self.transform_matrix, local_transform)
+            
+            # 如果子对象是组，递归更新其子项
+            if child.type == "group":
+                child._update_children_transforms()
     
     def add_child(self, child):
         """添加子对象(几何体或组)"""

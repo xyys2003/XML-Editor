@@ -180,7 +180,7 @@ class OpenGLWidget(QOpenGLWidget):
         self.check_camera_consistency()
 
     def paintGL(self):
-        """绘制OpenGL场景"""
+        """重写的绘制函数，考虑父级变换"""
         # 清除缓冲区
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
@@ -198,10 +198,14 @@ class OpenGLWidget(QOpenGLWidget):
         # 2. 绘制非选中物体
         for geo in self.geometries:
             if geo != self.selected_geo:
-                # 绘制几何体
-                self.draw_geometry(geo)
-                # 绘制包围盒
-                self.draw_aabb(geo)
+                # 检查是否有父级坐标系
+                if geo.parent:
+                    # 如果有父级，获取父级的变换矩阵
+                    parent_transform = geo.parent.transform_matrix  # 假设每个组都有transform_matrix属性
+                    self.draw_geometry(geo, parent_transform=parent_transform)
+                else:
+                    # 没有父级，使用默认值None
+                    self.draw_geometry(geo)
         
         # 3. 绘制选中物体（带特效）
         if self.selected_geo:
@@ -211,7 +215,13 @@ class OpenGLWidget(QOpenGLWidget):
             # 3.2 绘制半透明的选中物体
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-            self.draw_geometry(self.selected_geo, alpha=0.4)
+            if geo.parent:
+                    # 如果有父级，获取父级的变换矩阵
+                    parent_transform = geo.parent.transform_matrix  # 假设每个组都有transform_matrix属性
+                    self.draw_geometry(geo, parent_transform=parent_transform,alpha=0.4)
+            else:
+                    # 没有父级，使用默认值None
+                    self.draw_geometry(geo)
             glDisable(GL_BLEND)
             
             # 3.3 绘制高亮的包围盒
@@ -957,9 +967,21 @@ class OpenGLWidget(QOpenGLWidget):
         else:
             super().keyPressEvent(event)
 
-    def add_geometry(self, geo):
-        """添加几何体到场景"""
-        self.geometries.append(geo)
+    def add_geometry(self, geo, parent=None):
+        """添加几何体到场景，考虑父级"""
+        if parent:
+            # 添加到父组
+            parent.add_child(geo)
+            geo.parent = parent
+        else:
+            # 添加到根级
+            self.geometries.append(geo)
+        
+        # 如果是组，确保更新其变换矩阵
+        if geo.type == "group":
+            if hasattr(geo, '_update_transform'):
+                geo._update_transform()
+        
         self.geometriesChanged.emit()
         self.update()
     
@@ -1411,12 +1433,14 @@ class OpenGLWidget(QOpenGLWidget):
                 self._handle_rotate_drag(dx, dy)
             elif self.current_mode == OperationMode.MODE_SCALE:
                 self._handle_scale_drag(dx, dy)
-                
-            # 更新显示
-            self.update()
             
+            # 如果是组类型，需要递归更新所有子组的变换
+            if self.selected_geo.type == "group":
+                self.update_transforms_recursive(self.selected_geo)
+        
+            self.update()
         except Exception as e:
-            print(f"处理轴拖动时出错: {str(e)}")
+            print(f"坐标轴拖动时出错: {str(e)}")
             import traceback
             traceback.print_exc()
 
@@ -1537,7 +1561,385 @@ class OpenGLWidget(QOpenGLWidget):
         return True
     
     
-    def draw_outline(self, geo):
+    def draw_outline(self, geo, parent_transform=None):
+        """绘制物体轮廓，用于突出显示选中的物体"""
+        if not geo:
+            return
+            
+        # 保存当前OpenGL状态
+        glPushAttrib(GL_ALL_ATTRIB_BITS)
+        
+        # 禁用光照和深度写入
+        glDisable(GL_LIGHTING)
+        glDepthMask(GL_FALSE)
+        
+        # 使用线框模式
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+        
+        # 设置线宽和颜色
+        glLineWidth(3.0)
+        glColor4f(1.0, 0.8, 0.0, 1.0)  # 明亮的黄色
+        
+        # 缩放略大一点绘制轮廓
+        glPushMatrix()
+        glTranslatef(*geo.position)
+        glRotatef(geo.rotation[0], 1, 0, 0)
+        glRotatef(geo.rotation[1], 0, 1, 0)
+        glRotatef(geo.rotation[2], 0, 0, 1)
+        
+        # 比原始大小略大
+        scale_factor = 1.02
+        if geo.type == GeometryType.BOX:
+            glScalef(*(geo.size * 2.0 * scale_factor))
+            glutWireCube(1.0)
+        elif geo.type == GeometryType.SPHERE:
+            glutWireSphere(geo.size[0] * scale_factor, 20, 20)
+        elif geo.type == GeometryType.ELLIPSOID:
+            glScalef(*(geo.size * scale_factor))
+            glutWireSphere(1.0, 20, 20)
+        elif geo.type == GeometryType.CYLINDER:
+            radius = geo.size[0] * scale_factor
+            height = geo.size[1] * 2 * scale_factor
+            glRotatef(90, 1, 0, 0)
+            glutWireCylinder(radius, height, 20, 8)
+        elif geo.type == GeometryType.CAPSULE:
+            radius = geo.size[0] * scale_factor
+            half_height = geo.size[1] * scale_factor  # 这里是半高
+            
+            # 旋转为匹配MuJoCo的胶囊体方向(z轴朝上)
+            glRotatef(90, 1, 0, 0)
+            
+            # 绘制圆柱部分 - 长度为两倍的half_height
+            glutWireCylinder(radius, half_height * 2, 20, 8)
+            
+            # 顶部半球 - 位于圆柱体顶端
+            glPushMatrix()
+            glTranslatef(0, 0, half_height)
+            # 绘制完整球体，只有一半会在圆柱体外部可见
+            quadric = gluNewQuadric()
+            gluQuadricDrawStyle(quadric, GLU_LINE)
+            gluSphere(quadric, radius, 16, 8)
+            gluDeleteQuadric(quadric)
+            glPopMatrix()
+            
+            # 底部半球 - 位于圆柱体底端
+            glPushMatrix()
+            glTranslatef(0, 0, -half_height)
+            quadric = gluNewQuadric()
+            gluQuadricDrawStyle(quadric, GLU_LINE)
+            gluSphere(quadric, radius, 16, 8)
+            gluDeleteQuadric(quadric)
+            glPopMatrix()
+        
+        elif geo.type == GeometryType.PLANE:
+            # 绘制平面轮廓 - 更清晰地表示为网格
+            width = geo.size[0] * 2 * scale_factor  # x方向尺寸
+            depth = geo.size[2] * 2 * scale_factor  # z方向尺寸
+            
+            # 不使用glScalef，直接绘制具体尺寸的平面
+            # 绘制平面边界
+            glBegin(GL_LINE_LOOP)
+            glVertex3f(-width/2, 0, -depth/2)
+            glVertex3f(width/2, 0, -depth/2)
+            glVertex3f(width/2, 0, depth/2)
+            glVertex3f(-width/2, 0, depth/2)
+            glEnd()
+            
+            # 绘制网格线
+            grid_div = 4
+            glBegin(GL_LINES)
+            # X方向线
+            for i in range(1, grid_div):
+                t = i / grid_div
+                z = depth * (t - 0.5)
+                glVertex3f(-width/2, 0, z)
+                glVertex3f(width/2, 0, z)
+            
+            # Z方向线
+            for i in range(1, grid_div):
+                t = i / grid_div
+                x = width * (t - 0.5)
+                glVertex3f(x, 0, -depth/2)
+                glVertex3f(x, 0, depth/2)
+            glEnd()
+            
+            # 绘制法线
+            glBegin(GL_LINES)
+            glVertex3f(0, 0, 0)
+            glVertex3f(0, width/10, 0)  # 法线长度为平面宽度的十分之一
+            glEnd()
+        
+        glPopMatrix()
+        
+        # 恢复OpenGL状态
+        glPopAttrib()
+
+    def _draw_ray(self):
+        glDisable(GL_LIGHTING)
+        glLineWidth(2.0)
+        
+        # 绘制基础射线（红色）
+        glColor3f(1.0, 0.0, 0.0)
+        glBegin(GL_LINES)
+        print(self.ray_origin)
+
+        glVertex3fv(self.ray_origin)
+        glVertex3fv(self.ray_origin + self.ray_direction * 100)  # 延伸100单位
+        glEnd()
+        
+        # 绘制命中点（绿色方块）
+        if self.ray_hit_point is not None:
+            glPushMatrix()
+            glTranslatef(*self.ray_hit_point)
+            glColor3f(0.0, 1.0, 0.0)
+            glutSolidCube(0.2)  # 绘制边长为0.2的立方体
+            glPopMatrix()
+        
+        glEnable(GL_LIGHTING)
+
+    def detect_axis(self, mouse_pos):
+        """检测鼠标是否点击到了变换轴"""
+        # 首先检查是否有选中的物体
+        if not self.selected_geo:
+            return None
+            
+        try:
+            # 获取变换轴的根部位置（物体的位置）
+            if hasattr(self.selected_geo, 'position'):
+                axis_origin = np.array(self.selected_geo.position, dtype=np.float32)
+            else:
+                print("警告：选中物体没有position属性")
+                return None
+                
+            # 获取变换轴的长度（根据模式和相机距离调整）
+            camera_pos = np.array(self.camera_config.get('position', [0, 0, 0]), dtype=np.float32)
+            distance = np.linalg.norm(camera_pos - axis_origin)
+            axis_length = distance * 0.15  # 根据相机距离调整轴长
+            
+            # 定义三个坐标轴的端点
+            axis_end_x = axis_origin + np.array([axis_length, 0, 0], dtype=np.float32)
+            axis_end_y = axis_origin + np.array([0, axis_length, 0], dtype=np.float32)
+            axis_end_z = axis_origin + np.array([0, 0, axis_length], dtype=np.float32)
+            
+            # 获取当前视图和投影矩阵
+            try:
+                modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
+                projection = glGetDoublev(GL_PROJECTION_MATRIX)
+                viewport = glGetIntegerv(GL_VIEWPORT)
+            except Exception as e:
+                print(f"获取OpenGL矩阵失败: {str(e)}")
+                return None
+                
+            # 投影函数
+            def safe_project(point):
+                try:
+                    # 将3D点投影到屏幕空间
+                    screen_point = gluProject(point[0], point[1], point[2], 
+                                            modelview, projection, viewport)
+                    return np.array([screen_point[0], screen_point[1]], dtype=np.float32)
+                except Exception as e:
+                    print(f"投影失败: {str(e)}")
+                    return None
+            
+            # 投影原点和三个轴端点到屏幕空间
+            origin_screen = safe_project(axis_origin)
+            
+            if origin_screen is None:
+                print("原点投影失败")
+                return None
+            
+            # 投影各轴端点
+            x_screen = safe_project(axis_end_x)
+            y_screen = safe_project(axis_end_y)
+            z_screen = safe_project(axis_end_z)
+            
+            if x_screen is None or y_screen is None or z_screen is None:
+                print("坐标轴端点投影失败")
+                return None
+                
+            # 获取鼠标位置
+            mouse_point = np.array([mouse_pos.x(), mouse_pos.y()], dtype=np.float32)
+            
+            # 计算点到线的距离函数
+            def point_to_line_dist(point, line_start, line_end):
+                if np.array_equal(line_start, line_end):
+                    return np.linalg.norm(point - line_start)
+                    
+                line_vec = line_end - line_start
+                point_vec = point - line_start
+                line_len = np.linalg.norm(line_vec)
+                line_unit_vec = line_vec / line_len
+                
+                # 计算投影长度
+                proj_len = np.dot(point_vec, line_unit_vec)
+                
+                # 如果投影点在线段外，返回到端点的距离
+                if proj_len < 0:
+                    return np.linalg.norm(point - line_start)
+                elif proj_len > line_len:
+                    return np.linalg.norm(point - line_end)
+                    
+                # 计算投影点
+                proj_point = line_start + line_unit_vec * proj_len
+                return np.linalg.norm(point - proj_point)
+            
+            # 检测鼠标是否接近任何一个坐标轴
+            threshold = 15  # 像素阈值
+            
+            # 检查X轴
+            if point_to_line_dist(mouse_point, origin_screen, x_screen) < threshold:
+                return 'x'
+                
+            # 检查Y轴
+            if point_to_line_dist(mouse_point, origin_screen, y_screen) < threshold:
+                return 'y'
+                
+            # 检查Z轴
+            if point_to_line_dist(mouse_point, origin_screen, z_screen) < threshold:
+                return 'z'
+                
+            return None
+            
+        except Exception as e:
+            print(f"检测坐标轴时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def handle_axis_drag(self, dx, dy):
+        """处理坐标轴拖动"""
+        if self.selected_geo:
+            if self.operation_mode == OperationMode.TRANSLATE:
+                self._handle_translate_drag(dx, dy)
+            elif self.operation_mode == OperationMode.ROTATE:
+                self._handle_rotate_drag(dx, dy)
+            elif self.operation_mode == OperationMode.SCALE:
+                self._handle_scale_drag(dx, dy)
+        
+            # 如果是组类型，更新它及其所有子对象的变换
+            if self.selected_geo.type == "group":
+                self.update_transforms_recursive(self.selected_geo)
+        
+            self.update()
+
+    def _handle_translate_drag(self, dx, dy):
+        """处理平移拖拽，支持组和子物体一起移动"""
+        if not self.selected_geo:
+            return
+            
+        # 获取相机方向向量
+        camera_pos = self.camera_config['position']
+        camera_dir = self._camera_target - camera_pos
+        camera_dist = np.linalg.norm(camera_dir)
+        
+        # 计算缩放因子（基于相机距离）
+        scale_factor = 0.01 * camera_dist
+        
+        # 根据活动轴应用平移
+        if self.active_axis == 'x':
+            # 在X轴方向平移
+            self.selected_geo.position[0] += dx * scale_factor
+        elif self.active_axis == 'y':
+            # 在Y轴方向平移
+            self.selected_geo.position[1] += dx * scale_factor
+        elif self.active_axis == 'z':
+            # 在Z轴方向平移
+            self.selected_geo.position[2] += dx * scale_factor
+        
+        # 如果是组，确保更新子对象的变换
+        if self.selected_geo.type == "group":
+            self.selected_geo._update_transform()  # 先更新自身变换矩阵
+            self.selected_geo._update_children_transforms()  # 然后更新所有子对象
+        
+        # 确保每次操作后立即更新视图
+        self.update()
+
+    def _handle_rotate_drag(self, dx, dy):
+        """处理旋转拖拽，支持组和子物体一起旋转"""
+        if not self.selected_geo:
+            return
+            
+        # 旋转速度因子
+        rotation_speed = 0.5
+        
+        # 根据活动轴应用旋转
+        if self.active_axis == 'x':
+            self.selected_geo.rotation[0] += dx * rotation_speed
+        elif self.active_axis == 'y':
+            self.selected_geo.rotation[1] += dx * rotation_speed
+        elif self.active_axis == 'z':
+            self.selected_geo.rotation[2] += dx * rotation_speed
+        
+        # 如果是组，确保更新子对象的变换
+        if self.selected_geo.type == "group":
+            self.selected_geo._update_transform()  # 先更新自身变换矩阵
+            self.selected_geo._update_children_transforms()  # 然后更新所有子对象
+        
+        # 确保每次操作后立即更新视图
+        self.update()
+
+    def _handle_scale_drag(self, dx, dy):
+        """处理缩放拖拽，仅适用于几何体而非组"""
+        if not self.selected_geo or self.selected_geo.type == "group":
+            return  # 组不支持缩放操作
+            
+        # 缩放速度因子
+        scale_speed = 0.01
+        
+        # 根据活动轴应用缩放
+        if self.active_axis == 'x':
+            new_scale = self.selected_geo.size[0] * (1 + dx * scale_speed)
+            self.selected_geo.size[0] = max(0.1, new_scale)  # 防止缩放为负或过小
+        elif self.active_axis == 'y':
+            new_scale = self.selected_geo.size[1] * (1 + dx * scale_speed)
+            self.selected_geo.size[1] = max(0.1, new_scale)
+        elif self.active_axis == 'z':
+            new_scale = self.selected_geo.size[2] * (1 + dx * scale_speed)
+            self.selected_geo.size[2] = max(0.1, new_scale)
+        
+        # 确保每次操作后立即更新视图
+        self.update()
+
+    def check_camera_consistency(self):
+        """检查相机配置与OpenGL状态的一致性"""
+        # 获取当前OpenGL矩阵
+        current_projection = glGetFloatv(GL_PROJECTION_MATRIX)
+        current_modelview = glGetFloatv(GL_MODELVIEW_MATRIX)
+        
+        # 将NumPy矩阵转换为适合比较的格式(列主序)
+        config_proj = self.camera_config['projection'].T.flatten()
+        config_view = self.camera_config['view'].T.flatten()
+        
+        # 转换为列表进行比较
+        gl_proj = current_projection.flatten()
+        gl_view = current_modelview.flatten()
+        
+        # 检查矩阵差异
+        proj_diff = np.mean(np.abs(gl_proj - config_proj))
+        view_diff = np.mean(np.abs(gl_view - config_view))
+        
+        # 输出差异信息
+        if proj_diff > 0.01 or view_diff > 0.01:
+            print(f"警告: 相机配置与OpenGL状态不一致 (投影差异: {proj_diff:.5f}, 视图差异: {view_diff:.5f})")
+            # 可以考虑自动同步
+            return False
+        
+        # 检查与射线投射器的一致性
+        if hasattr(self, 'raycaster'):
+            # 这里需要假设raycaster有一个获取相机配置的方法
+            # 如果没有，应该在raycaster中添加
+            raycaster_camera = getattr(self.raycaster, '_camera_config', None)
+            if raycaster_camera is not None:
+                # 检查关键参数是否一致
+                pos_diff = np.linalg.norm(raycaster_camera['position'] - self.camera_config['position'])
+                if pos_diff > 0.001:
+                    print(f"警告: 射线投射器相机位置与主相机不一致 (差异: {pos_diff:.5f})")
+                    return False
+        
+        return True
+    
+    
+    def draw_outline(self, geo, parent_transform=None):
         """绘制物体轮廓，用于突出显示选中的物体"""
         if not geo:
             return
@@ -1684,8 +2086,8 @@ class OpenGLWidget(QOpenGLWidget):
             gizmo_pos = obj_pos + np.array([0, 0, offset_distance])
         
         # 坐标轴的长度和粗细
-        axis_length = max(0.5, obj_size * 0.8)
-        axis_thickness = axis_length * 0.08  # 轴的粗细
+        axis_length = max(2.5, obj_size * 0.8)
+        axis_thickness = axis_length * 0.05  # 轴的粗细
         
         # 禁用深度测试，确保坐标系总是可见
         glDisable(GL_DEPTH_TEST)
@@ -2399,6 +2801,77 @@ class OpenGLWidget(QOpenGLWidget):
         for i in range(item.childCount()):
             self._update_selection_recursive(item.child(i), obj)
 
+    def update_group_transforms_recursive(self, group):
+        """递归更新组及其所有子组的变换矩阵"""
+        # 首先更新当前组的变换矩阵
+        # 这里假设已经有了_update_transform方法
+        if hasattr(group, '_update_transform'):
+            group._update_transform()
+        
+        # 递归更新所有子组
+        for child in group.children:
+            if child.type == "group":
+                self.update_group_transforms_recursive(child)
+            # 对于几何体不需要处理，因为几何体的变换会在绘制时考虑
+
+    def update_transforms_recursive(self, obj):
+        """递归更新对象及其所有子对象的变换矩阵
+        
+        Args:
+            obj: 需要更新变换的对象(几何体或组)
+        """
+        if obj.type == "group":
+            # 更新组自身的变换矩阵
+            # 创建当前组的变换矩阵
+            transform = np.identity(4)
+            
+            # 平移
+            translation = np.array([
+                [1, 0, 0, obj.position[0]],
+                [0, 1, 0, obj.position[1]],
+                [0, 0, 1, obj.position[2]],
+                [0, 0, 0, 1]
+            ])
+            transform = np.dot(translation, transform)
+            
+            # 旋转
+            for i, angle in enumerate(obj.rotation):
+                # 为X、Y、Z轴创建旋转矩阵
+                rotation = np.identity(4)
+                angle_rad = np.radians(angle)
+                c = np.cos(angle_rad)
+                s = np.sin(angle_rad)
+                
+                if i == 0:  # X轴旋转
+                    rotation[1:3, 1:3] = [[c, -s], [s, c]]
+                elif i == 1:  # Y轴旋转
+                    rotation[0, 0] = c
+                    rotation[0, 2] = s
+                    rotation[2, 0] = -s
+                    rotation[2, 2] = c
+                elif i == 2:  # Z轴旋转
+                    rotation[0:2, 0:2] = [[c, -s], [s, c]]
+                
+                transform = np.dot(rotation, transform)
+            
+            # 如果有父组，需要考虑父组的变换
+            if obj.parent is not None:
+                parent_transform = obj.parent.transform_matrix
+                transform = np.dot(parent_transform, transform)
+            
+            # 保存计算后的变换矩阵
+            obj.transform_matrix = transform
+            
+            # 递归处理所有子对象
+            for child in obj.children:
+                self.update_transforms_recursive(child)
+        else:
+            # 处理非组对象(几何体)
+            # 几何体只需要确保其父级变换已更新
+            # 实际绘制时会考虑父级变换
+            if hasattr(obj, "_update_transform"):
+                obj._update_transform()  # 更新自身的局部变换
+
 
 
 # ========== 界面组件 ==========
@@ -2582,122 +3055,171 @@ class PropertyPanel(QDockWidget):
     def __init__(self, gl_widget):
         super().__init__("属性面板")
         self.gl_widget = gl_widget
-        self.current_geo = None
-        self._in_update = False
+        self.gl_widget.selection_changed.connect(self.on_selection_changed)
         
-        # 创建主容器和布局
-        self.widget = QWidget()
-        self.main_layout = QVBoxLayout(self.widget)
+        # 添加当前几何体的引用
+        self.current_geo = None
+        self._in_update = False  # 添加更新标志
+        
+        # 创建主widget和布局
+        self.main_widget = QWidget()
+        self.main_layout = QVBoxLayout()
+        self.main_widget.setLayout(self.main_layout)
         
         # 创建表单布局
         self.form_layout = QFormLayout()
         self.main_layout.addLayout(self.form_layout)
         
-        # 初始化常用控件变量为空
-        self.name_edit = None
-        self.pos_spinners = []
-        self.rot_spinners = []
-        self.scale_spinners = []
+        # 创建按钮布局
+        self.button_layout = QHBoxLayout()
         
-        # 设置主控件
-        self.setWidget(self.widget)
+        # 创建确定和取消按钮
+        self.apply_button = QPushButton("确定")
+        self.cancel_button = QPushButton("取消")
         
-        # 监听场景中的选择变化
-        self.gl_widget.selection_changed.connect(self.on_selection_changed)
-
+        # 添加按钮到布局
+        self.button_layout.addWidget(self.apply_button)
+        self.button_layout.addWidget(self.cancel_button)
+        
+        # 将按钮布局添加到主布局
+        self.main_layout.addLayout(self.button_layout)
+        
+        # 连接按钮信号
+        self.apply_button.clicked.connect(self._on_apply)
+        self.cancel_button.clicked.connect(self._on_cancel)
+        
+        # 存储临时数据的变量
+        self.temp_data = {}
+        
+        self.setWidget(self.main_widget)
+        
     def on_selection_changed(self, geo):
         """当选择变更时更新面板内容"""
-        # 先清除所有控件引用，避免访问已删除控件
-        self.name_edit = None
-        self.pos_spinners = []
-        self.rot_spinners = []
-        self.scale_spinners = []
-        self.color_button = None  # 明确设置为 None
-        self.roughness_slider = None
-        self.metallic_slider = None
-        self.visible_checkbox = None
+        self.current_geo = geo  # 更新当前几何体引用
+        self._in_update = True  # 设置更新标志
         
-        # 然后清除布局
-        self.clear_layout(self.form_layout)
-        
-        if geo is None:
-            self.current_geo = None
-            return
-
-        self.current_geo = geo
-        
-        # 添加名称字段
-        self.name_edit = QLineEdit(geo.name)
-        self.form_layout.addRow("名称:", self.name_edit)
-        
-        # 添加位置控件
-        self.pos_spinners = []
-        pos_layout = QHBoxLayout()
-        for i, val in enumerate(geo.position):
-            spinner = self._create_spinbox()
-            spinner.setValue(val)
-            self.pos_spinners.append(spinner)
-            pos_layout.addWidget(spinner)
-        self.form_layout.addRow("位置:", pos_layout)
-        
-        # 如果是几何体(不是组)，添加特有属性
-        if hasattr(geo, 'type') and geo.type != "group":
-            # 添加旋转控件
+        try:
+            # 清除旧的控件
+            self.clear_layout(self.form_layout)
+            
+            if not geo:
+                return
+                
+            # 保存当前物体的原始数据
+            self.temp_data = {
+                'name': geo.name,
+                'position': geo.position.copy(),
+                'rotation': geo.rotation.copy(),
+                'size': geo.size.copy()
+            }
+            
+            if hasattr(geo, 'material'):
+                self.temp_data['color'] = geo.material.color.copy()
+            
+            # 创建名称输入框
+            self.name_edit = QLineEdit(geo.name)
+            self.form_layout.addRow("名称:", self.name_edit)
+            
+            # 创建位置、旋转、缩放的spinner
+            self.pos_spinners = []
             self.rot_spinners = []
+            self.scale_spinners = []
+            
+            # 位置控件
+            pos_widget = QWidget()
+            pos_layout = QHBoxLayout()
+            pos_widget.setLayout(pos_layout)
+            for i, val in enumerate(geo.position):
+                spinner = self._create_spinbox()
+                spinner.setValue(val)
+                pos_layout.addWidget(spinner)
+                self.pos_spinners.append(spinner)
+            self.form_layout.addRow("位置:", pos_widget)
+            
+            # 旋转控件
+            rot_widget = QWidget()
             rot_layout = QHBoxLayout()
+            rot_widget.setLayout(rot_layout)
             for i, val in enumerate(geo.rotation):
                 spinner = self._create_spinbox()
                 spinner.setValue(val)
-                self.rot_spinners.append(spinner)
                 rot_layout.addWidget(spinner)
-            self.form_layout.addRow("旋转:", rot_layout)
+                self.rot_spinners.append(spinner)
+            self.form_layout.addRow("旋转:", rot_widget)
             
-            # 添加缩放控件
-            self.scale_spinners = []
+            # 缩放控件
+            scale_widget = QWidget()
             scale_layout = QHBoxLayout()
+            scale_widget.setLayout(scale_layout)
             for i, val in enumerate(geo.size):
-                spinner = self._create_spinbox(min_val=0.01, max_val=100)
+                spinner = self._create_spinbox()
                 spinner.setValue(val)
-                self.scale_spinners.append(spinner)
                 scale_layout.addWidget(spinner)
-            self.form_layout.addRow("缩放:", scale_layout)
+                self.scale_spinners.append(spinner)
+            self.form_layout.addRow("缩放:", scale_widget)
             
-            # 添加材质属性（如果存在）
+            # 如果是几何体，添加材质属性
             if hasattr(geo, 'material'):
                 # 颜色选择按钮
                 self.color_button = QPushButton()
-                color = QColor.fromRgbF(*geo.material.color)
-                self.color_button.setStyleSheet(f"background-color: {color.name()}")
+                color = geo.material.color
+                self.color_button.setStyleSheet(
+                    f"background-color: rgb({int(color[0]*255)}, {int(color[1]*255)}, {int(color[2]*255)})")
                 self.form_layout.addRow("颜色:", self.color_button)
-                
-                # 可能需要添加其他材质属性，如粗糙度、金属度等
-                if hasattr(geo.material, 'roughness'):
-                    self.roughness_slider = QSlider(Qt.Horizontal)
-                    self.roughness_slider.setRange(0, 100)
-                    self.roughness_slider.setValue(int(geo.material.roughness * 100))
-                    self.form_layout.addRow("粗糙度:", self.roughness_slider)
-                
-                if hasattr(geo.material, 'metallic'):
-                    self.metallic_slider = QSlider(Qt.Horizontal)
-                    self.metallic_slider.setRange(0, 100)
-                    self.metallic_slider.setValue(int(geo.material.metallic * 100))
-                    self.form_layout.addRow("金属度:", self.metallic_slider)
-        
-        # 组特有属性
-        if geo.type == "group":
-            # 可以添加组特有的属性，如可见性等
-            if hasattr(geo, 'visible'):
-                self.visible_checkbox = QCheckBox()
-                self.visible_checkbox.setChecked(geo.visible)
-                self.form_layout.addRow("可见:", self.visible_checkbox)
-        
-        # 检查是否需要尝试连接信号
-        has_controls = False
-        
-        # 只有在添加了控件后才连接信号
-        if has_controls:
+            
+            # 连接信号
             self._connect_signals()
-
+            
+        finally:
+            self._in_update = False  # 确保标志被重置
+    
+    def _on_apply(self):
+        """确定按钮点击处理"""
+        if not self.current_geo:
+            return
+            
+        # 应用所有更改
+        with self._block_geo_signals():
+            # 更新名称
+            if hasattr(self, 'name_edit'):
+                self.current_geo.name = self.name_edit.text()
+            
+            # 更新位置
+            if hasattr(self, 'pos_spinners') and len(self.pos_spinners) == 3:
+                self.current_geo.position = np.array([s.value() for s in self.pos_spinners])
+            
+            # 更新旋转
+            if hasattr(self, 'rot_spinners') and len(self.rot_spinners) == 3:
+                self.current_geo.rotation = np.array([s.value() for s in self.rot_spinners])
+            
+            # 更新缩放
+            if hasattr(self, 'scale_spinners') and len(self.scale_spinners) == 3:
+                self.current_geo.size = np.array([s.value() for s in self.scale_spinners])
+        
+        # 更新显示
+        self.gl_widget.update()
+    
+    def _on_cancel(self):
+        """取消按钮点击处理"""
+        if not self.current_geo or not self.temp_data:
+            return
+            
+        # 恢复原始数据
+        with self._block_geo_signals():
+            self.current_geo.name = self.temp_data['name']
+            self.current_geo.position = self.temp_data['position']
+            self.current_geo.rotation = self.temp_data['rotation']
+            self.current_geo.size = self.temp_data['size']
+            
+            if hasattr(self.current_geo, 'material') and 'color' in self.temp_data:
+                self.current_geo.material.color = self.temp_data['color']
+        
+        # 更新UI显示
+        self.on_selection_changed(self.current_geo)
+        
+        # 更新3D视图
+        self.gl_widget.update()
+    
     def _create_spinbox(self, min_val=-999, max_val=999):
         spin = QDoubleSpinBox()
         spin.setRange(min_val, max_val)
@@ -2706,34 +3228,63 @@ class PropertyPanel(QDockWidget):
         return spin
         
     def _connect_signals(self):
-        """安全信号连接方式"""
-        # 名称编辑
-        if hasattr(self, 'name_edit') and self.name_edit is not None:
-            self.name_edit.editingFinished.connect(self._on_name_changed)
-        
-        # 数值控件统一处理
-        if hasattr(self, 'pos_spinners') and self.pos_spinners:
-            for spin in self.pos_spinners:
-                if spin is not None:  # 添加额外检查
-                    spin.valueChanged.connect(self._on_value_changed)
+        """连接所有控件的信号"""
+        try:
+            # 名称编辑框
+            if hasattr(self, 'name_edit') and self.name_edit is not None:
+                try:
+                    self.name_edit.textChanged.disconnect()
+                except:
+                    pass
+                self.name_edit.textChanged.connect(self._on_name_changed)
             
-        if hasattr(self, 'rot_spinners') and self.rot_spinners:
-            for spin in self.rot_spinners:
-                if spin is not None:  # 添加额外检查
-                    spin.valueChanged.connect(self._on_value_changed)
+            # 位置spinners
+            if hasattr(self, 'pos_spinners'):
+                for spinner in self.pos_spinners:
+                    if spinner is not None:
+                        try:
+                            spinner.valueChanged.disconnect()
+                        except:
+                            pass
+                        spinner.valueChanged.connect(self._on_value_changed)
             
-        if hasattr(self, 'scale_spinners') and self.scale_spinners:
-            for spin in self.scale_spinners:
-                if spin is not None:  # 添加额外检查
-                    spin.valueChanged.connect(self._on_value_changed)
-        
-        # 颜色按钮
-        if hasattr(self, 'color_button') and self.color_button is not None:
-            self.color_button.clicked.connect(self._pick_color)
+            # 旋转spinners
+            if hasattr(self, 'rot_spinners'):
+                for spinner in self.rot_spinners:
+                    if spinner is not None:
+                        try:
+                            spinner.valueChanged.disconnect()
+                        except:
+                            pass
+                        spinner.valueChanged.connect(self._on_value_changed)
             
-        # 可见性复选框
-        if hasattr(self, 'visible_checkbox') and self.visible_checkbox is not None:
-            self.visible_checkbox.toggled.connect(self._on_visibility_changed)
+            # 缩放spinners
+            if hasattr(self, 'scale_spinners'):
+                for spinner in self.scale_spinners:
+                    if spinner is not None:
+                        try:
+                            spinner.valueChanged.disconnect()
+                        except:
+                            pass
+                        spinner.valueChanged.connect(self._on_value_changed)
+            
+            # 颜色按钮
+            if hasattr(self, 'color_button') and self.color_button is not None:
+                try:
+                    # 检查按钮是否有效
+                    if not sip.isdeleted(self.color_button):
+                        try:
+                            self.color_button.clicked.disconnect()
+                        except:
+                            pass
+                        self.color_button.clicked.connect(self._pick_color)
+                except:
+                    pass
+                
+        except Exception as e:
+            print(f"连接信号时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     @contextmanager
     def _block_signals(self):
@@ -3084,20 +3635,53 @@ class HierarchyTree(QDockWidget):
             self._delete_object(obj)
     
     def _add_geometry_to_group(self, parent_group, geo_type):
-        """添加几何体到组"""
-        # 创建新几何体
-        new_geo = Geometry(
-            geo_type=geo_type,
-            name=f"New {geo_type.capitalize()}",
-            position=(0, 0, 0)
-        )
+        """添加几何体到组内
         
-        # 添加到父组
-        parent_group.add_child(new_geo)
-        
-        # 更新UI
-        self.refresh()
-        self.gl_widget.update()
+        Args:
+            parent_group: 父级组对象
+            geo_type: 几何体类型
+        """
+        try:
+            # 创建几何体实例
+            count = len(parent_group.children) + 1
+            name = f"{geo_type}_{count}"
+            
+            # 创建几何体对象
+            geo = Geometry(
+                geo_type=geo_type,
+                name=name,
+                position=(0, 0, 0),
+                size=(1, 1, 1),
+                rotation=(0, 0, 0)
+            )
+            print(2,geo.name)
+            self.gl_widget.add_geometry(geo,parent_group)
+            self.gl_widget.geometries.append(geo)
+
+            
+            # 刷新层级树
+            self.refresh()
+            
+            # 选中新添加的几何体
+            self.gl_widget.set_selection(geo)
+            
+            # 确保更新组的变换矩阵，传递给子对象
+            if hasattr(self.gl_widget, 'update_transforms_recursive'):
+                self.gl_widget.update_transforms_recursive(parent_group)
+            
+            # 如果在观察模式，自动切换到平移模式
+            if self.gl_widget.current_mode == OperationMode.MODE_OBSERVE:
+                for panel in self.gl_widget.parent().findChildren(ControlPanel):
+                    if hasattr(panel, 'translate_btn'):
+                        panel.translate_btn.setChecked(True)
+                        break
+            
+            # 更新视图
+            self.gl_widget.update()
+        except Exception as e:
+            print(f"向组添加几何体时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     def _add_group_to_group(self, parent_group):
         """添加子组到父组"""
