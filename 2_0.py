@@ -210,7 +210,7 @@ class OpenGLWidget(QOpenGLWidget):
         # 3. 绘制选中物体（带特效）
         if self.selected_geo:
             # 3.1 绘制选中物体的轮廓
-            self.draw_outline(self.selected_geo)
+            # self.draw_outline(self.selected_geo)
             
             # 3.2 绘制半透明的选中物体
             glEnable(GL_BLEND)
@@ -225,10 +225,10 @@ class OpenGLWidget(QOpenGLWidget):
             glDisable(GL_BLEND)
             
             # 3.3 绘制高亮的包围盒
-            self.draw_aabb(self.selected_geo, highlight=True)
+            # self.draw_aabb(self.selected_geo, highlight=True)
             
             # 3.4 绘制右上方悬浮坐标系
-            self.draw_floating_gizmo(self.selected_geo)
+            # self.draw_floating_gizmo(self.selected_geo)
             
             # 3.5 在非观察模式下绘制变换控制器
             if self.current_mode != OperationMode.MODE_OBSERVE:
@@ -355,36 +355,32 @@ class OpenGLWidget(QOpenGLWidget):
         glPopMatrix()
 
     def draw_gizmo(self):
-        """绘制变换控件，根据当前操作模式显示不同的控件"""
+        """根据当前选择和操作模式绘制变换控件"""
         if not self.selected_geo:
             return
         
-        # 获取选中物体的世界位置
-        position = self.selected_geo.position
-        if self.selected_geo.parent:
-            # 如果有父组，考虑父组的变换
-            parent_transform = self.selected_geo.parent.transform_matrix
-            position_vec = np.array([*position, 1.0])
-            world_position = np.dot(parent_transform, position_vec)[:3]
-        else:
-            world_position = position
-        
-        # 保存当前材质和光照状态
-        glPushAttrib(GL_LIGHTING_BIT | GL_CURRENT_BIT | GL_LINE_BIT | GL_DEPTH_BUFFER_BIT)
-        
-        # 根据当前操作模式绘制不同的控件
-        if self.current_mode == OperationMode.MODE_TRANSLATE:
-            # 绘制平移控件
-            self._draw_translation_gizmo(world_position)
-        elif self.current_mode == OperationMode.MODE_ROTATE:
-            # 绘制旋转控件
-            self._draw_rotation_gizmo(world_position)
-        elif self.current_mode == OperationMode.MODE_SCALE:
-            # 绘制缩放控件
-            self._draw_scale_gizmo(world_position)
-        
-        # 恢复状态
-        glPopAttrib()
+        try:
+            # 获取对象的世界坐标位置
+            if self.selected_geo.type == "group":
+                world_position = self.selected_geo.get_world_position()
+            else:
+                world_position = self.selected_geo.position.copy()
+            
+            # 保存当前材质和光照状态
+            glPushAttrib(GL_LIGHTING_BIT | GL_CURRENT_BIT | GL_LINE_BIT | GL_DEPTH_BUFFER_BIT)
+            
+            # 根据当前操作模式绘制不同的控件
+            if self.current_mode == OperationMode.MODE_TRANSLATE or self.current_mode == OperationMode.MODE_SCALE:
+                # 平移和缩放模式都使用浮动坐标系
+                self.draw_floating_gizmo(self.selected_geo)
+            elif self.current_mode == OperationMode.MODE_ROTATE:
+                # 旋转模式使用旋转控件
+                self._draw_rotation_gizmo(world_position)
+            
+            # 恢复状态
+            glPopAttrib()
+        except Exception as e:
+            print(f"绘制控件出错: {str(e)}")
 
     def _draw_scale_gizmo(self, position):
         """绘制缩放控件"""
@@ -667,130 +663,22 @@ class OpenGLWidget(QOpenGLWidget):
         glEnd()
 
     def detect_axis(self, mouse_pos):
-        """检测鼠标是否点击到了变换轴"""
-        # 首先检查是否有选中的物体
+        """检测鼠标与哪个轴相交"""
         if not self.selected_geo:
             return -1
-        
+            
         try:
-            # 获取选中物体的世界位置
-            position = self.selected_geo.position
-            if self.selected_geo.parent:
-                parent_transform = self.selected_geo.parent.transform_matrix
-                position_vec = np.array([*position, 1.0])
-                world_position = np.dot(parent_transform, position_vec)[:3]
-            else:
-                world_position = position
-            
-            # 根据当前操作模式调用不同的检测方法
-            if self.current_mode == OperationMode.MODE_TRANSLATE:
-                # 检测平移轴
-                return self._detect_translation_axis(mouse_pos, world_position)
+            if self.current_mode in [OperationMode.MODE_TRANSLATE, OperationMode.MODE_SCALE]:
+                # 平移和缩放模式都使用浮动坐标系的轴检测
+                return self.detect_floating_axis(mouse_pos)
             elif self.current_mode == OperationMode.MODE_ROTATE:
-                # 检测旋转轴
-                return self._detect_rotation_axis(mouse_pos, world_position)
-            elif self.current_mode == OperationMode.MODE_SCALE:
-                # 检测缩放轴
-                return self._detect_scale_axis(mouse_pos, world_position)
-            
+                # 旋转模式使用旋转轴检测
+                return self._detect_rotation_axis(mouse_pos, self.selected_geo.position)
+                
             return -1
         except Exception as e:
-            print(f"检测坐标轴出错: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            print(f"轴检测出错: {str(e)}")
             return -1
-
-    def _detect_scale_axis(self, mouse_pos, position):
-        """检测鼠标是否在缩放控件上"""
-        # 获取射线信息
-        ray_origin, ray_direction = self._get_mouse_ray(mouse_pos)
-        
-        # 初始化结果
-        active_axis = -1
-        min_distance = float('inf')
-        
-        # 控件尺寸（应与_draw_scale_gizmo中一致）
-        axis_length = 1.5
-        axis_radius = 0.03
-        box_size = 0.1
-        central_box_size = 0.15
-        
-        # 检查三个轴向的圆柱体
-        axis_directions = [
-            np.array([1, 0, 0]),  # X轴
-            np.array([0, 1, 0]),  # Y轴
-            np.array([0, 0, 1])   # Z轴
-        ]
-        
-        # 对每个轴进行检查
-        for i, direction in enumerate(axis_directions):
-            # 计算轴的起点和终点
-            start_point = position
-            end_point = position + direction * axis_length
-            
-            # 检测射线与圆柱体相交
-            result = self._ray_cylinder_intersection(
-                ray_origin, ray_direction, 
-                start_point, end_point, 
-                axis_radius
-            )
-            
-            # 如果相交，检查距离
-            if result is not None:
-                # 确保我们接收到的是数字距离而不是字典
-                t = result
-                if isinstance(result, dict) and 'distance' in result:
-                    t = result['distance']
-                elif isinstance(result, (list, tuple, np.ndarray)) and len(result) > 3:
-                    t = result[3]  # 假设第四个元素是距离
-                    
-                # 检查这个距离是否是最近的
-                if t is not None and isinstance(t, (int, float)) and t > 0 and t < min_distance:
-                    min_distance = t
-                    active_axis = i
-        
-        # 检查中心的统一缩放控件
-        box_center = position
-        box_half_size = np.array([central_box_size/2, central_box_size/2, central_box_size/2])
-        
-        result = self._ray_box_intersection(ray_origin, ray_direction, box_center, box_half_size)
-        
-        if result is not None and result > 0 and result < min_distance:
-            min_distance = result
-            active_axis = 3  # 统一缩放的特殊索引
-        
-        return active_axis
-
-    def _ray_box_intersection(self, ray_origin, ray_direction, box_center, half_size):
-        """计算射线与盒子的相交距离"""
-        # 计算射线与盒子的相对位置
-        min_point = box_center - half_size
-        max_point = box_center + half_size
-        
-        # 计算与各个面的相交时间
-        t_min = float('-inf')
-        t_max = float('inf')
-        
-        for i in range(3):
-            if abs(ray_direction[i]) < 1e-6:
-                # 射线平行于这个轴的面
-                if ray_origin[i] < min_point[i] or ray_origin[i] > max_point[i]:
-                    return -1  # 没有相交
-            else:
-                t1 = (min_point[i] - ray_origin[i]) / ray_direction[i]
-                t2 = (max_point[i] - ray_origin[i]) / ray_direction[i]
-                
-                if t1 > t2:
-                    t1, t2 = t2, t1
-                    
-                t_min = max(t_min, t1)
-                t_max = min(t_max, t2)
-                
-                if t_min > t_max:
-                    return -1  # 没有相交
-        
-        # 返回相交距离
-        return t_min if t_min > 0 else t_max
 
     def mousePressEvent(self, event):
         """处理鼠标按下事件"""
@@ -851,12 +739,9 @@ class OpenGLWidget(QOpenGLWidget):
         dy = event.y() - self.last_mouse_pos.y()
         
         # 处理变换轴拖拽
-        if self.left_button_pressed and self.dragging and self.active_axis:
-            # 判断是拖拽悬浮坐标系还是普通变换轴
-            if hasattr(self, '_dragging_floating_gizmo') and self._dragging_floating_gizmo:
-                self._handle_floating_axis_drag(dx, dy)
-            else:
-                self.handle_axis_drag(dx, dy)
+        if self.left_button_pressed and self.dragging and self.active_axis is not None:
+            # 统一使用handle_axis_drag处理所有轴拖动
+            self.handle_axis_drag(dx, dy)
         # 处理视角平移（左键拖动空白处）
         elif self.left_button_pressed and self.is_dragging_view:
             self.handle_view_pan(dx, dy)
@@ -1160,40 +1045,31 @@ class OpenGLWidget(QOpenGLWidget):
         return gluUnProject(winX, winY, depth, modelview, projection, viewport)
 
     def draw_infinite_grid(self):
-        """绘制无限网格并与坐标轴融合"""
-        glPushAttrib(GL_ENABLE_BIT)
-        glEnable(GL_DEPTH_TEST)
-        glEnable(GL_LIGHTING)
+        """绘制无限网格"""
+        # 保存当前颜色
+        current_color = glGetFloatv(GL_CURRENT_COLOR)
         
-        # 获取相机位置和方向
-        eye_pos = self._camera_target + self._camera_radius * np.array([
-            np.sin(np.radians(self._camera_theta)) * np.cos(np.radians(self._camera_phi)),
-            np.sin(np.radians(self._camera_theta)) * np.sin(np.radians(self._camera_phi)),
-            np.cos(np.radians(self._camera_theta))
-        ])
+        # 设置网格线属性
+        glLineWidth(1.0)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
-        # 动态计算网格密度和范围（基于相机距离）
-        grid_scale = max(1, int(self._camera_radius / 5))  # 每5单位增加一级密度
-        major_interval = 10.0 * grid_scale
-        minor_interval = 1.0 * grid_scale
+        # 绘制主网格
+        center_x = 0
+        center_z = 0
+        main_interval = 1.0
+        main_extent = 50.0
         
-        # 计算网格原点对齐（网页2的坐标对齐技巧）
-        cam_pos = np.array(eye_pos)
-        aligned_x = cam_pos[0] - (cam_pos[0] % major_interval)
-        aligned_z = cam_pos[2] - (cam_pos[2] % major_interval)
-        grid_extent = self._camera_radius * 2  # 可见范围
+        # 主网格线（较暗）
+        glColor4f(0.5, 0.5, 0.5, 0.3)
+        self._draw_grid_lines(center_x, center_z, main_interval, main_extent)
         
-        # 绘制主网格线
-        glLineWidth(1)
-        glColor3f(0.4, 0.4, 0.4)
-        self._draw_grid_lines(aligned_x, aligned_z, major_interval, grid_extent)
+        # 次网格线（更暗）
+        glColor4f(0.3, 0.3, 0.3, 0.15)
+        self._draw_grid_lines(center_x, center_z, main_interval/5, main_extent)
         
-        # 绘制次网格线（更细更浅）
-        glLineWidth(0.5)
-        glColor3f(0.3, 0.3, 0.3)
-        self._draw_grid_lines(aligned_x, aligned_z, minor_interval, grid_extent)
-        
-        glPopAttrib()
+        # 恢复原始颜色
+        glColor4fv(current_color)
 
     def _draw_grid_lines(self, center_x, center_z, interval, extent):
         """动态生成网格线并跳过坐标轴区域"""
@@ -1669,139 +1545,55 @@ class OpenGLWidget(QOpenGLWidget):
         glEnable(GL_LIGHTING)
 
     def detect_axis(self, mouse_pos):
-        """检测鼠标是否点击到了变换轴"""
-        # 首先检查是否有选中的物体
+        """检测鼠标与哪个轴相交"""
         if not self.selected_geo:
-            return None
+            return -1
             
         try:
-            # 获取变换轴的根部位置（物体的位置）
-            if hasattr(self.selected_geo, 'position'):
-                axis_origin = np.array(self.selected_geo.position, dtype=np.float32)
-            else:
-                print("警告：选中物体没有position属性")
-                return None
+            if self.current_mode in [OperationMode.MODE_TRANSLATE, OperationMode.MODE_SCALE]:
+                # 平移和缩放模式都使用浮动坐标系的轴检测
+                return self.detect_floating_axis(mouse_pos)
+            elif self.current_mode == OperationMode.MODE_ROTATE:
+                # 旋转模式使用旋转轴检测
+                return self._detect_rotation_axis(mouse_pos, self.selected_geo.position)
                 
-            # 获取变换轴的长度（根据模式和相机距离调整）
-            camera_pos = np.array(self.camera_config.get('position', [0, 0, 0]), dtype=np.float32)
-            distance = np.linalg.norm(camera_pos - axis_origin)
-            axis_length = distance * 0.15  # 根据相机距离调整轴长
-            
-            # 定义三个坐标轴的端点
-            axis_end_x = axis_origin + np.array([axis_length, 0, 0], dtype=np.float32)
-            axis_end_y = axis_origin + np.array([0, axis_length, 0], dtype=np.float32)
-            axis_end_z = axis_origin + np.array([0, 0, axis_length], dtype=np.float32)
-            
-            # 获取当前视图和投影矩阵
-            try:
-                modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
-                projection = glGetDoublev(GL_PROJECTION_MATRIX)
-                viewport = glGetIntegerv(GL_VIEWPORT)
-            except Exception as e:
-                print(f"获取OpenGL矩阵失败: {str(e)}")
-                return None
-                
-            # 投影函数
-            def safe_project(point):
-                try:
-                    # 将3D点投影到屏幕空间
-                    screen_point = gluProject(point[0], point[1], point[2], 
-                                            modelview, projection, viewport)
-                    return np.array([screen_point[0], screen_point[1]], dtype=np.float32)
-                except Exception as e:
-                    print(f"投影失败: {str(e)}")
-                    return None
-            
-            # 投影原点和三个轴端点到屏幕空间
-            origin_screen = safe_project(axis_origin)
-            
-            if origin_screen is None:
-                print("原点投影失败")
-                return None
-            
-            # 投影各轴端点
-            x_screen = safe_project(axis_end_x)
-            y_screen = safe_project(axis_end_y)
-            z_screen = safe_project(axis_end_z)
-            
-            if x_screen is None or y_screen is None or z_screen is None:
-                print("坐标轴端点投影失败")
-                return None
-                
-            # 获取鼠标位置
-            mouse_point = np.array([mouse_pos.x(), mouse_pos.y()], dtype=np.float32)
-            
-            # 计算点到线的距离函数
-            def point_to_line_dist(point, line_start, line_end):
-                if np.array_equal(line_start, line_end):
-                    return np.linalg.norm(point - line_start)
-                    
-                line_vec = line_end - line_start
-                point_vec = point - line_start
-                line_len = np.linalg.norm(line_vec)
-                line_unit_vec = line_vec / line_len
-                
-                # 计算投影长度
-                proj_len = np.dot(point_vec, line_unit_vec)
-                
-                # 如果投影点在线段外，返回到端点的距离
-                if proj_len < 0:
-                    return np.linalg.norm(point - line_start)
-                elif proj_len > line_len:
-                    return np.linalg.norm(point - line_end)
-                    
-                # 计算投影点
-                proj_point = line_start + line_unit_vec * proj_len
-                return np.linalg.norm(point - proj_point)
-            
-            # 检测鼠标是否接近任何一个坐标轴
-            threshold = 15  # 像素阈值
-            
-            # 检查X轴
-            if point_to_line_dist(mouse_point, origin_screen, x_screen) < threshold:
-                return 'x'
-                
-            # 检查Y轴
-            if point_to_line_dist(mouse_point, origin_screen, y_screen) < threshold:
-                return 'y'
-                
-            # 检查Z轴
-            if point_to_line_dist(mouse_point, origin_screen, z_screen) < threshold:
-                return 'z'
-                
-            return None
-            
+            return -1
         except Exception as e:
-            print(f"检测坐标轴时出错: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return None
+            print(f"轴检测出错: {str(e)}")
+            return -1
 
     def handle_axis_drag(self, dx, dy):
-        """处理坐标轴拖动"""
-        if not self.selected_geo:
+        """统一处理轴向拖动"""
+        if not hasattr(self, 'active_axis') or not self.selected_geo:
             return
             
-        try:
-            # 使用 current_mode 而不是 operation_mode
-            if self.current_mode == OperationMode.MODE_TRANSLATE:
-                self._handle_translate_drag(dx, dy)
-            elif self.current_mode == OperationMode.MODE_ROTATE:
-                self._handle_rotate_drag(dx, dy)
-            elif self.current_mode == OperationMode.MODE_SCALE:
-                self._handle_scale_drag(dx, dy)
+        # 根据当前操作模式调用相应的处理函数
+        if self.current_mode == OperationMode.MODE_TRANSLATE:
+            self._handle_translate_drag(dx, dy)
+        elif self.current_mode == OperationMode.MODE_ROTATE:
+            # 根据活动轴确定旋转方向
+            rotation_amount = dx * 0.5  # 可以调整这个系数来控制旋转速度
             
-            # 如果是组，可能需要更新子对象的变换
-            if self.selected_geo and self.selected_geo.type == "group":
-                # 使用您代码中已有的递归更新方法
-                if hasattr(self, 'update_transforms_recursive'):
-                    self.update_transforms_recursive(self.selected_geo)
+            # 根据选中的轴更新相应的旋转角度
+            if self.active_axis == 'x':
+                self.selected_geo.rotation[0] += rotation_amount
+            elif self.active_axis == 'y':
+                self.selected_geo.rotation[1] += rotation_amount
+            elif self.active_axis == 'z':
+                self.selected_geo.rotation[2] += rotation_amount
             
-            self.update()
-        except Exception as e:
-            print(f"坐标轴拖动处理出错: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            # 更新变换
+            if hasattr(self.selected_geo, '_update_transform'):
+                self.selected_geo._update_transform()
+            
+            # 如果是组，更新所有子对象
+            if self.selected_geo.type == "group":
+                self.update_group_transforms_recursive(self.selected_geo)
+                
+        elif self.current_mode == OperationMode.MODE_SCALE:
+            self._handle_scale_drag(dx, dy)
+            
+        self.update()
 
     def _handle_translate_drag(self, dx, dy):
         """处理平移拖拽，支持组和子物体一起移动"""
@@ -2110,139 +1902,55 @@ class OpenGLWidget(QOpenGLWidget):
         glEnable(GL_LIGHTING)
 
     def detect_axis(self, mouse_pos):
-        """检测鼠标是否点击到了变换轴"""
-        # 首先检查是否有选中的物体
+        """检测鼠标与哪个轴相交"""
         if not self.selected_geo:
-            return None
+            return -1
             
         try:
-            # 获取变换轴的根部位置（物体的位置）
-            if hasattr(self.selected_geo, 'position'):
-                axis_origin = np.array(self.selected_geo.position, dtype=np.float32)
-            else:
-                print("警告：选中物体没有position属性")
-                return None
+            if self.current_mode in [OperationMode.MODE_TRANSLATE, OperationMode.MODE_SCALE]:
+                # 平移和缩放模式都使用浮动坐标系的轴检测
+                return self.detect_floating_axis(mouse_pos)
+            elif self.current_mode == OperationMode.MODE_ROTATE:
+                # 旋转模式使用旋转轴检测
+                return self._detect_rotation_axis(mouse_pos, self.selected_geo.position)
                 
-            # 获取变换轴的长度（根据模式和相机距离调整）
-            camera_pos = np.array(self.camera_config.get('position', [0, 0, 0]), dtype=np.float32)
-            distance = np.linalg.norm(camera_pos - axis_origin)
-            axis_length = distance * 0.15  # 根据相机距离调整轴长
-            
-            # 定义三个坐标轴的端点
-            axis_end_x = axis_origin + np.array([axis_length, 0, 0], dtype=np.float32)
-            axis_end_y = axis_origin + np.array([0, axis_length, 0], dtype=np.float32)
-            axis_end_z = axis_origin + np.array([0, 0, axis_length], dtype=np.float32)
-            
-            # 获取当前视图和投影矩阵
-            try:
-                modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
-                projection = glGetDoublev(GL_PROJECTION_MATRIX)
-                viewport = glGetIntegerv(GL_VIEWPORT)
-            except Exception as e:
-                print(f"获取OpenGL矩阵失败: {str(e)}")
-                return None
-                
-            # 投影函数
-            def safe_project(point):
-                try:
-                    # 将3D点投影到屏幕空间
-                    screen_point = gluProject(point[0], point[1], point[2], 
-                                            modelview, projection, viewport)
-                    return np.array([screen_point[0], screen_point[1]], dtype=np.float32)
-                except Exception as e:
-                    print(f"投影失败: {str(e)}")
-                    return None
-            
-            # 投影原点和三个轴端点到屏幕空间
-            origin_screen = safe_project(axis_origin)
-            
-            if origin_screen is None:
-                print("原点投影失败")
-                return None
-            
-            # 投影各轴端点
-            x_screen = safe_project(axis_end_x)
-            y_screen = safe_project(axis_end_y)
-            z_screen = safe_project(axis_end_z)
-            
-            if x_screen is None or y_screen is None or z_screen is None:
-                print("坐标轴端点投影失败")
-                return None
-                
-            # 获取鼠标位置
-            mouse_point = np.array([mouse_pos.x(), mouse_pos.y()], dtype=np.float32)
-            
-            # 计算点到线的距离函数
-            def point_to_line_dist(point, line_start, line_end):
-                if np.array_equal(line_start, line_end):
-                    return np.linalg.norm(point - line_start)
-                    
-                line_vec = line_end - line_start
-                point_vec = point - line_start
-                line_len = np.linalg.norm(line_vec)
-                line_unit_vec = line_vec / line_len
-                
-                # 计算投影长度
-                proj_len = np.dot(point_vec, line_unit_vec)
-                
-                # 如果投影点在线段外，返回到端点的距离
-                if proj_len < 0:
-                    return np.linalg.norm(point - line_start)
-                elif proj_len > line_len:
-                    return np.linalg.norm(point - line_end)
-                    
-                # 计算投影点
-                proj_point = line_start + line_unit_vec * proj_len
-                return np.linalg.norm(point - proj_point)
-            
-            # 检测鼠标是否接近任何一个坐标轴
-            threshold = 15  # 像素阈值
-            
-            # 检查X轴
-            if point_to_line_dist(mouse_point, origin_screen, x_screen) < threshold:
-                return 'x'
-                
-            # 检查Y轴
-            if point_to_line_dist(mouse_point, origin_screen, y_screen) < threshold:
-                return 'y'
-                
-            # 检查Z轴
-            if point_to_line_dist(mouse_point, origin_screen, z_screen) < threshold:
-                return 'z'
-                
-            return None
-            
+            return -1
         except Exception as e:
-            print(f"检测坐标轴时出错: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return None
+            print(f"轴检测出错: {str(e)}")
+            return -1
 
     def handle_axis_drag(self, dx, dy):
-        """处理坐标轴拖动"""
-        if not self.selected_geo:
+        """统一处理轴向拖动"""
+        if not hasattr(self, 'active_axis') or not self.selected_geo:
             return
             
-        try:
-            # 使用 current_mode 而不是 operation_mode
-            if self.current_mode == OperationMode.MODE_TRANSLATE:
-                self._handle_translate_drag(dx, dy)
-            elif self.current_mode == OperationMode.MODE_ROTATE:
-                self._handle_rotate_drag(dx, dy)
-            elif self.current_mode == OperationMode.MODE_SCALE:
-                self._handle_scale_drag(dx, dy)
+        # 根据当前操作模式调用相应的处理函数
+        if self.current_mode == OperationMode.MODE_TRANSLATE:
+            self._handle_translate_drag(dx, dy)
+        elif self.current_mode == OperationMode.MODE_ROTATE:
+            # 根据活动轴确定旋转方向
+            rotation_amount = dx * 0.5  # 可以调整这个系数来控制旋转速度
             
-            # 如果是组，可能需要更新子对象的变换
-            if self.selected_geo and self.selected_geo.type == "group":
-                # 使用您代码中已有的递归更新方法
-                if hasattr(self, 'update_transforms_recursive'):
-                    self.update_transforms_recursive(self.selected_geo)
+            # 根据选中的轴更新相应的旋转角度
+            if self.active_axis == 'x':
+                self.selected_geo.rotation[0] += rotation_amount
+            elif self.active_axis == 'y':
+                self.selected_geo.rotation[1] += rotation_amount
+            elif self.active_axis == 'z':
+                self.selected_geo.rotation[2] += rotation_amount
             
-            self.update()
-        except Exception as e:
-            print(f"坐标轴拖动处理出错: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            # 更新变换
+            if hasattr(self.selected_geo, '_update_transform'):
+                self.selected_geo._update_transform()
+            
+            # 如果是组，更新所有子对象
+            if self.selected_geo.type == "group":
+                self.update_group_transforms_recursive(self.selected_geo)
+                
+        elif self.current_mode == OperationMode.MODE_SCALE:
+            self._handle_scale_drag(dx, dy)
+            
+        self.update()
 
     def _handle_translate_drag(self, dx, dy):
         """处理平移拖拽，支持组和子物体一起移动"""
@@ -3345,57 +3053,212 @@ class OpenGLWidget(QOpenGLWidget):
                 obj._update_transform()  # 更新自身的局部变换
 
     def _draw_rotation_gizmo(self, position):
-        """绘制旋转控件，使圆环与对应轴垂直"""
-        # 控件尺寸
-        radius = 1.2  # 圆环半径
-        line_width = 50.0  # 线宽
-        segments = 32  # 圆环细分段数
+        """绘制不与物体重合的旋转控件"""
+        if not self.selected_geo:
+            return
+            
+        # 计算物体的世界坐标位置和尺寸
+        obj_pos = self.selected_geo.position
+        obj_size = np.max(self.selected_geo.size)
         
-        # 禁用深度测试和光照，确保控件总是可见
-        glDisable(GL_DEPTH_TEST)
-        glDisable(GL_LIGHTING)
-        glLineWidth(line_width)
+        # 确定控件的位置 - 距离物体一定距离
+        camera_pos = self.camera_config['position']
+        camera_dir = self._camera_target - camera_pos
         
-        # 绘制X轴旋转环（红色）- 在YZ平面上
-        if self.active_axis == 0:
-            glColor3f(1.0, 1.0, 0.0)  # 高亮为黄色
-        else:
-            glColor3f(1.0, 0.0, 0.0)  # 红色
+        # 计算相机到物体的方向
+        to_obj_dir = obj_pos - camera_pos
+        to_obj_dist = np.linalg.norm(to_obj_dir)
         
-        glPushMatrix()
-        glTranslatef(*position)
-        # 不需要旋转，直接在YZ平面绘制，即X轴垂直于圆环平面
-        glRotatef(90, 0, 1, 0)  # 旋转90度，使圆环垂直于X轴
-        self._draw_circle(radius, segments)
-        glPopMatrix()
+        # 更新相机向量
+        self.update_camera_vectors()
         
-        # 绘制Y轴旋转环（绿色）- 在XZ平面上
-        if self.active_axis == 1:
-            glColor3f(1.0, 1.0, 0.0)  # 高亮为黄色
-        else:
-            glColor3f(0.0, 1.0, 0.0)  # 绿色
+        # 使用相机的右向量确定控件位置
+        offset_distance = max(obj_size * 2.5, 1.0)
+        gizmo_pos = obj_pos + self.camera_right * offset_distance + np.array([0, 0, offset_distance * 0.5])
         
-        glPushMatrix()
-        glTranslatef(*position)
-        glRotatef(90, 1, 0, 0)  # 旋转90度，使圆环垂直于Y轴
-        self._draw_circle(radius, segments)
-        glPopMatrix()
+        if self.selected_geo.type == GeometryType.PLANE:
+            gizmo_pos = obj_pos + np.array([0, 0, offset_distance])
         
-        # 绘制Z轴旋转环（蓝色）- 在XY平面上
-        if self.active_axis == 2:
-            glColor3f(1.0, 1.0, 0.0)  # 高亮为黄色
-        else:
-            glColor3f(0.0, 0.0, 1.0)  # 蓝色
+        # 控件参数
+        axis_length = max(2.5, obj_size * 0.8)
+        axis_thickness = axis_length * 0.05
         
-        glPushMatrix()
-        glTranslatef(*position)
-        # 不需要旋转，XY平面圆环已经垂直于Z轴
-        self._draw_circle(radius, segments)
-        glPopMatrix()
+        # 保存当前状态
+        current_color = glGetFloatv(GL_CURRENT_COLOR)
         
-        # 恢复深度测试和光照
-        glEnable(GL_DEPTH_TEST)
-        glEnable(GL_LIGHTING)
+        try:
+            glDisable(GL_DEPTH_TEST)
+            glDisable(GL_LIGHTING)
+            
+            # 绘制原点球
+            glPushMatrix()
+            glTranslatef(*gizmo_pos)
+            
+            glColor3f(0.8, 0.8, 0.8)
+            glutSolidSphere(axis_thickness * 1.5, 12, 12)
+            
+            # 存储几何信息用于检测
+            self.rotation_gizmo_geometries = []
+            
+            # X轴旋转控件（红色）
+            glColor3f(1.0, 0.0, 0.0)
+            self._draw_axis_cylinder(
+                0, -axis_length/2, 0,  # 起点
+                0, axis_length/2, 0,   # 终点
+                axis_thickness
+            )
+            x_axis_geo = Geometry(
+                geo_type=GeometryType.CYLINDER,
+                name="rotation_x_axis",
+                position=gizmo_pos,
+                size=[axis_thickness, axis_length/2, 0],
+                rotation=[0, 0, 0]
+            )
+            x_axis_geo.material.color = [1.0, 0.0, 0.0, 1.0]
+            self.rotation_gizmo_geometries.append(('x', x_axis_geo))
+            
+            # Y轴旋转控件（绿色）
+            glColor3f(0.0, 1.0, 0.0)
+            self._draw_axis_cylinder(
+                -axis_length/2, 0, 0,  # 起点
+                axis_length/2, 0, 0,   # 终点
+                axis_thickness
+            )
+            y_axis_geo = Geometry(
+                geo_type=GeometryType.CYLINDER,
+                name="rotation_y_axis",
+                position=gizmo_pos,
+                size=[axis_thickness, axis_length/2, 0],
+                rotation=[0, 90, 0]
+            )
+            y_axis_geo.material.color = [0.0, 1.0, 0.0, 1.0]
+            self.rotation_gizmo_geometries.append(('y', y_axis_geo))
+            
+            # Z轴旋转控件（蓝色）
+            glColor3f(0.0, 0.0, 1.0)
+            self._draw_axis_cylinder(
+                0, 0, -axis_length/2,  # 起点
+                0, 0, axis_length/2,   # 终点
+                axis_thickness
+            )
+            z_axis_geo = Geometry(
+                geo_type=GeometryType.CYLINDER,
+                name="rotation_z_axis",
+                position=gizmo_pos,
+                size=[axis_thickness, axis_length/2, 0],
+                rotation=[90, 0, 0]
+            )
+            z_axis_geo.material.color = [0.0, 0.0, 1.0, 1.0]
+            self.rotation_gizmo_geometries.append(('z', z_axis_geo))
+            
+            # 如果有活动轴，绘制高亮
+            if hasattr(self, 'active_axis'):
+                glColor3f(1, 1, 0)  # 黄色高亮
+                if self.active_axis == 'x':
+                    self._draw_axis_cylinder(
+                        0, -axis_length/2, 0,
+                        0, axis_length/2, 0,
+                        axis_thickness * 1.2
+                    )
+                elif self.active_axis == 'y':
+                    self._draw_axis_cylinder(
+                        -axis_length/2, 0, 0,
+                        axis_length/2, 0, 0,
+                        axis_thickness * 1.2
+                    )
+                elif self.active_axis == 'z':
+                    self._draw_axis_cylinder(
+                        0, 0, -axis_length/2,
+                        0, 0, axis_length/2,
+                        axis_thickness * 1.2
+                    )
+                
+        finally:
+            # 恢复状态
+            glPopMatrix()
+            glEnable(GL_LIGHTING)
+            glEnable(GL_DEPTH_TEST)
+            glColor4fv(current_color)
+            
+        # 存储控件位置信息供检测使用
+        self.rotation_gizmo_pos = gizmo_pos
+
+    def _detect_rotation_axis(self, mouse_pos, position):
+        """检测旋转轴的点击"""
+        ray_origin, ray_direction = self._get_mouse_ray(mouse_pos)
+        
+        # 控件参数
+        axis_length = 1.2
+        axis_radius = 0.03
+        
+        # 定义三个旋转轴的圆柱体
+        cylinders = [
+            # X轴旋转控件（垂直于X轴）
+            {
+                'start': position + np.array([0, -axis_length/2, 0]),
+                'end': position + np.array([0, axis_length/2, 0]),
+                'axis': 'x'
+            },
+            # Y轴旋转控件
+            {
+                'start': position + np.array([-axis_length/2, 0, 0]),
+                'end': position + np.array([axis_length/2, 0, 0]),
+                'axis': 'y'
+            },
+            # Z轴旋转控件（需要考虑90度旋转）
+            {
+                'start': position + np.array([0, 0, -axis_length/2]),
+                'end': position + np.array([0, 0, axis_length/2]),
+                'axis': 'z'
+            }
+        ]
+        
+        # 检测与每个圆柱体的相交
+        min_distance = float('inf')
+        selected_axis = None
+        
+        for cylinder in cylinders:
+            result = self._ray_cylinder_intersection(
+                ray_origin, 
+                ray_direction,
+                cylinder['start'],
+                cylinder['end'],
+                axis_radius
+            )
+            
+            if result is not None:
+                distance = result[3] if isinstance(result, np.ndarray) else result
+                
+                if distance > 0 and distance < min_distance:
+                    min_distance = distance
+                    selected_axis = cylinder['axis']
+    
+        return selected_axis
+
+    def _handle_rotate_drag(self, dx, dy):
+        """处理旋转拖动"""
+        if not hasattr(self, 'active_axis') or not self.selected_geo:
+            return
+            
+        # 根据活动轴确定旋转方向
+        rotation_amount = dx * 0.5  # 可以调整这个系数来控制旋转速度
+        
+        if self.active_axis == 'x':
+            self.selected_geo.rotation[0] += rotation_amount
+        elif self.active_axis == 'y':
+            self.selected_geo.rotation[1] += rotation_amount
+        elif self.active_axis == 'z':
+            self.selected_geo.rotation[2] += rotation_amount
+        
+        # 更新变换
+        if hasattr(self.selected_geo, '_update_transform'):
+            self.selected_geo._update_transform()
+        
+        # 如果是组，更新所有子对象
+        if self.selected_geo.type == "group":
+            self.update_group_transforms_recursive(self.selected_geo)
+        
+        self.update()
 
     def _draw_circle(self, radius, segments, line_width=10.0):
         """绘制一个圆形
@@ -3415,37 +3278,21 @@ class OpenGLWidget(QOpenGLWidget):
         glEnd()
 
     def detect_axis(self, mouse_pos):
-        """检测鼠标是否点击到了变换轴"""
-        # 首先检查是否有选中的物体
+        """检测鼠标与哪个轴相交"""
         if not self.selected_geo:
             return -1
-        
+            
         try:
-            # 获取选中物体的世界位置
-            position = self.selected_geo.position
-            if self.selected_geo.parent:
-                parent_transform = self.selected_geo.parent.transform_matrix
-                position_vec = np.array([*position, 1.0])
-                world_position = np.dot(parent_transform, position_vec)[:3]
-            else:
-                world_position = position
-            
-            # 根据当前操作模式调用不同的检测方法
-            if self.current_mode == OperationMode.MODE_TRANSLATE:
-                # 检测平移轴
-                return self._detect_translation_axis(mouse_pos, world_position)
+            if self.current_mode in [OperationMode.MODE_TRANSLATE, OperationMode.MODE_SCALE]:
+                # 平移和缩放模式都使用浮动坐标系的轴检测
+                return self.detect_floating_axis(mouse_pos)
             elif self.current_mode == OperationMode.MODE_ROTATE:
-                # 检测旋转轴
-                return self._detect_rotation_axis(mouse_pos, world_position)
-            elif self.current_mode == OperationMode.MODE_SCALE:
-                # 检测缩放轴
-                return self._detect_scale_axis(mouse_pos, world_position)
-            
+                # 旋转模式使用旋转轴检测
+                return self._detect_rotation_axis(mouse_pos, self.selected_geo.position)
+                
             return -1
         except Exception as e:
-            print(f"检测坐标轴出错: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            print(f"轴检测出错: {str(e)}")
             return -1
 
     def _detect_scale_axis(self, mouse_pos, position):
@@ -3540,100 +3387,83 @@ class OpenGLWidget(QOpenGLWidget):
         # 返回相交距离
         return t_min if t_min > 0 else t_max
 
-    def _handle_rotate_drag(self, dx, dy):
-        """处理旋转拖拽"""
-        if not self.selected_geo or self.active_axis == -1:
+    def _handle_floating_scale_drag(self, dx, dy):
+        """处理浮动坐标轴的缩放拖拽"""
+        if not self.selected_geo or not hasattr(self, 'active_axis'):
             return
-        
+            
         try:
-            # 旋转速度系数
-            rotation_speed = 0.5
+            # 获取当前选中的轴
+            if not hasattr(self, 'gizmo_geometries'):
+                return
+                
+            # 将轴名称转换为索引
+            axis_name = None
+            if isinstance(self.active_axis, str):
+                axis_name = self.active_axis
+            else:
+                # 如果是数字索引，确保在有效范围内
+                if self.active_axis >= 0 and self.active_axis < len(self.gizmo_geometries):
+                    axis_name = self.gizmo_geometries[self.active_axis][0]
             
-            # 当前旋转值
-            current_rotation = list(self.selected_geo.rotation)
+            if not axis_name:
+                return
+                
+            # 计算缩放因子
+            scale_speed = 0.01
             
-            # 根据活动轴计算旋转
-            if self.active_axis == 0:  # X轴
-                current_rotation[0] += dx * rotation_speed
-            elif self.active_axis == 1:  # Y轴
-                current_rotation[1] += dx * rotation_speed
-            elif self.active_axis == 2:  # Z轴
-                current_rotation[2] += dx * rotation_speed
+            # 从相机属性获取信息
+            camera_pos = np.array(self.camera_config['position'])
+            camera_target = np.array(self._camera_target)  # 使用_camera_target属性
             
-            # 应用新的旋转值
-            self.selected_geo.rotation = current_rotation
+            # 获取视图方向
+            view_dir = camera_target - camera_pos
+            view_dir = view_dir / np.linalg.norm(view_dir)
             
-            # 如果是组，更新所有子对象的变换
+            # 获取轴方向
+            axis_dir = None
+            if axis_name == 'x':
+                axis_dir = np.array([1, 0, 0])
+            elif axis_name == 'y':
+                axis_dir = np.array([0, 1, 0])
+            elif axis_name == 'z':
+                axis_dir = np.array([0, 0, 1])
+                
+            # 计算视图与轴的点积，决定拖动方向
+            view_dot = np.dot(view_dir, axis_dir)
+            
+            # 根据视图和轴的关系决定使用哪个方向的拖动值
+            if abs(view_dot) < 0.5:  # 视图方向与轴近乎垂直
+                drag_amount = -dy * scale_speed
+            else:
+                # 根据视图方向决定水平拖动的正负号
+                sign = -1 if view_dot < 0 else 1
+                drag_amount = dx * scale_speed * sign
+            
+            # 获取当前尺寸
+            current_size = list(self.selected_geo.size)
+            
+            # 根据轴更新相应维度的尺寸
+            axis_index = {'x': 0, 'y': 1, 'z': 2}[axis_name]
+            current_size[axis_index] += drag_amount
+            
+            # 确保尺寸不会太小
+            current_size[axis_index] = max(0.1, current_size[axis_index])
+            
+            # 应用新的尺寸
+            self.selected_geo.size = current_size
+            
+            # 如果是组，更新子对象的变换
             if self.selected_geo.type == "group":
-                # GeometryGroup类中的rotation setter应该已经更新了变换矩阵
-                # 这里不需要额外操作
-                pass
+                if hasattr(self.selected_geo, '_update_transform'):
+                    self.selected_geo._update_transform()
+                if hasattr(self.selected_geo, '_update_children_transforms'):
+                    self.selected_geo._update_children_transforms()
+                
         except Exception as e:
-            print(f"旋转拖拽出错: {str(e)}")
+            print(f"缩放拖拽出错: {str(e)}")
             import traceback
             traceback.print_exc()
-
-    def _detect_rotation_axis(self, mouse_pos, position):
-        """检测鼠标是否点击到了旋转环
-        
-        Args:
-            mouse_pos: 鼠标位置(QPoint)
-            position: 控件中心位置
-            
-        Returns:
-            int: 被点击的轴索引(0=X, 1=Y, 2=Z, -1=未点击)
-        """
-        # 获取鼠标射线
-        ray_origin, ray_direction = self._get_mouse_ray(mouse_pos)
-        if ray_origin is None or ray_direction is None:
-            return -1
-        
-        # 旋转环参数
-        radius = 1.2  # 与绘制时相同
-        tolerance = 0.1  # 检测容差
-        
-        # 定义三个平面（对应三个旋转环）
-        planes = [
-            {"normal": np.array([1, 0, 0]), "axis": 0},  # X轴旋转环（YZ平面）
-            {"normal": np.array([0, 1, 0]), "axis": 1},  # Y轴旋转环（XZ平面）
-            {"normal": np.array([0, 0, 1]), "axis": 2}   # Z轴旋转环（XY平面）
-        ]
-        
-        best_axis = -1
-        min_distance = float('inf')
-        
-        # 检测与每个平面的交点
-        for plane in planes:
-            normal = plane["normal"]
-            axis = plane["axis"]
-            
-            # 计算射线与平面的交点
-            denom = np.dot(normal, ray_direction)
-            if abs(denom) < 1e-6:  # 射线与平面平行
-                continue
-                
-            t = np.dot(normal, position - ray_origin) / denom
-            if t <= 0:  # 交点在射线后方
-                continue
-                
-            # 计算交点
-            intersection = ray_origin + t * ray_direction
-            
-            # 计算交点到环中心的距离
-            vec_to_center = intersection - position
-            # 移除在法线方向的分量
-            projected = vec_to_center - np.dot(vec_to_center, normal) * normal
-            dist_to_center = np.linalg.norm(projected)
-            
-            # 检查是否在环上（距离接近radius）
-            if abs(dist_to_center - radius) < tolerance:
-                # 计算交点到射线原点的距离
-                dist_to_origin = np.linalg.norm(intersection - ray_origin)
-                if dist_to_origin < min_distance:
-                    min_distance = dist_to_origin
-                    best_axis = axis
-        
-        return best_axis
 
 
 
