@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Optional, Tuple, Dict
 from PyQt5.QtCore import QObject, pyqtSignal
-from Geomentry import TransformMode, Material, GeometryType, Geometry,  OperationMode
+from Geomentry import TransformMode, Material, GeometryType, Geometry, GeometryGroup, OperationMode
 
 
 def euler_angles_to_matrix(angles):
@@ -18,7 +18,6 @@ def euler_angles_to_matrix(angles):
                   [np.sin(angles[2]), np.cos(angles[2]), 0],
                   [0, 0, 1]])
     
-        # ...类似生成Ry和Rz...
     rotation_3x3 = Rz @ Ry @ Rx
     
     # 扩展为4x4齐次矩阵
@@ -41,10 +40,10 @@ class RaycastResult:
         self.ray_direction: np.ndarray = None # 射线方向向量
 
 class GeometryRaycaster:
-    def __init__(self, camera_config: Dict, geometries: List[Geometry]):  # 修改构造函数
+    def __init__(self, camera_config: Dict, geometries: List[Geometry | GeometryGroup]):  # 更新类型注解
         self._validate_camera_config(camera_config)
         self.camera = camera_config
-        self.geometries = geometries  # 直接引用外部列表（非拷贝）
+        self.geometries = geometries
         self._aabb_cache = {}
 
     def _validate_camera_config(self, config: Dict):
@@ -66,66 +65,91 @@ class GeometryRaycaster:
         result = RaycastResult()
         result.distance = float('inf')
         
-        for geo in self.geometries:
-            # 获取几何体数据
-            center = geo.position
-            size = geo.size
-            
-            # 将欧拉角转换为旋转矩阵
-            rotation_matrix = euler_angles_to_matrix(np.radians(geo.rotation))[:3, :3]  # 只取3x3部分
-            
-            # 根据几何体类型调用相应的交点计算函数
-            hit_result = None
-            
-            if geo.type == GeometryType.BOX:
-                hit_result = self.ray_box_intersection(origin, direction, center, size, rotation_matrix)
-            elif geo.type == GeometryType.SPHERE:
-                hit_result = self.ray_sphere_intersection(origin, direction, center, size, rotation_matrix)
-            elif geo.type == GeometryType.CYLINDER:
-                hit_result = self.ray_cylinder_intersection(origin, direction, center, size, rotation_matrix)
-            elif geo.type == GeometryType.ELLIPSOID:
-                hit_result = self.ray_ellipsoid_intersection(origin, direction, center, size, rotation_matrix)
-            elif geo.type == GeometryType.CAPSULE:
-                hit_result = self.ray_capsule_intersection(origin, direction, center, size, rotation_matrix)
-            elif geo.type == GeometryType.PLANE:
-                hit_result = self.ray_plane_intersection(origin, direction, center, size, rotation_matrix)
-            
-            # 检查是否有有效交点，并且是否是最近的
-            if hit_result is not None and hit_result[3] > 0 and hit_result[3] < result.distance:
-                result.geometry = geo
-                result.distance = hit_result[3]
-                result.world_position = np.array([hit_result[0], hit_result[1], hit_result[2]])
-                
-                # 计算局部位置（世界坐标转换到局部坐标）
-                local_start, _ = self.transform_ray_to_local(
-                    result.world_position, 
-                    np.zeros(3),  # 方向无关紧要，因为我们只关心位置转换
-                    center, 
-                    rotation_matrix
-                )
-                result.local_position = local_start
-                
-                # 设置UV坐标（根据几何体类型计算）
-                if geo.type == GeometryType.BOX:
-                    result.uv_coords = self._compute_box_uv(local_start, size/2.0)
-                elif geo.type == GeometryType.SPHERE:
-                    result.uv_coords = self._compute_sphere_uv(local_start)
-                elif geo.type == GeometryType.CYLINDER:
-                    result.uv_coords = self._compute_cylinder_uv(local_start, size[0], size[1])
-                elif geo.type == GeometryType.ELLIPSOID:
-                    result.uv_coords = self._compute_ellipsoid_uv(local_start, size)
-                elif geo.type == GeometryType.CAPSULE:
-                    result.uv_coords = self._compute_capsule_uv(local_start, size[0], size[1])
-                elif geo.type == GeometryType.PLANE:
-                    # 平面的UV坐标，基于平面大小
-                    u = (local_start[0] / size[0] + 1.0) / 2.0
-                    v = (local_start[1] / size[1] + 1.0) / 2.0
-                    result.uv_coords = (u, v)
+        # 递归检查所有几何体（包括组中的几何体）
+        self._check_objects_recursive(self.geometries, origin, direction, result)
         
         result.ray_origin = origin.copy() if origin is not None else np.zeros(3)
         result.ray_direction = direction.copy() if direction is not None else np.zeros(3)
         
         return result if result.geometry else None
+
+    def _check_objects_recursive(self, objects, origin, direction, result):
+        """递归检查对象及其子对象与射线的交点
+        Args:
+            objects: 要检查的对象列表
+            origin: 射线起点
+            direction: 射线方向
+            result: 当前的检测结果
+        """
+        for obj in objects:
+            if isinstance(obj, GeometryGroup):
+                # 如果是组，递归检查其子对象
+                self._check_objects_recursive(obj.children, origin, direction, result)
+            else:
+                # 获取几何体数据
+                center = obj.position
+                size = obj.size
+                
+                # 将欧拉角转换为旋转矩阵
+                rotation_matrix = euler_angles_to_matrix(np.radians(obj.rotation))[:3, :3]
+                
+                # 考虑父组的变换
+                if obj.parent:
+                    parent_transform = obj.parent.transform_matrix
+                    # 提取父变换中的旋转部分
+                    parent_rotation = parent_transform[:3, :3]
+                    # 组合旋转
+                    rotation_matrix = parent_rotation @ rotation_matrix
+                    # 更新中心位置
+                    center = parent_transform @ np.append(obj.position, 1)
+                    center = center[:3]
+                
+                # 根据几何体类型调用相应的交点计算函数
+                hit_result = None
+                
+                if obj.type == GeometryType.BOX:
+                    hit_result = self.ray_box_intersection(origin, direction, center, size, rotation_matrix)
+                elif obj.type == GeometryType.SPHERE:
+                    hit_result = self.ray_sphere_intersection(origin, direction, center, size, rotation_matrix)
+                elif obj.type == GeometryType.CYLINDER:
+                    hit_result = self.ray_cylinder_intersection(origin, direction, center, size, rotation_matrix)
+                elif obj.type == GeometryType.ELLIPSOID:
+                    hit_result = self.ray_ellipsoid_intersection(origin, direction, center, size, rotation_matrix)
+                elif obj.type == GeometryType.CAPSULE:
+                    hit_result = self.ray_capsule_intersection(origin, direction, center, size, rotation_matrix)
+                elif obj.type == GeometryType.PLANE:
+                    hit_result = self.ray_plane_intersection(origin, direction, center, size, rotation_matrix)
+                
+                # 检查是否有有效交点，并且是否是最近的
+                if hit_result is not None and hit_result[3] > 0 and hit_result[3] < result.distance:
+                    result.geometry = obj
+                    result.distance = hit_result[3]
+                    result.world_position = np.array([hit_result[0], hit_result[1], hit_result[2]])
+                    
+                    # 计算局部位置（世界坐标转换到局部坐标）
+                    local_start, _ = self.transform_ray_to_local(
+                        result.world_position, 
+                        np.zeros(3),  # 方向无关紧要，因为我们只关心位置转换
+                        center, 
+                        rotation_matrix
+                    )
+                    result.local_position = local_start
+                    
+                    # 设置UV坐标
+                    if obj.type == GeometryType.BOX:
+                        result.uv_coords = self._compute_box_uv(local_start, size/2.0)
+                    elif obj.type == GeometryType.SPHERE:
+                        result.uv_coords = self._compute_sphere_uv(local_start)
+                    elif obj.type == GeometryType.CYLINDER:
+                        result.uv_coords = self._compute_cylinder_uv(local_start, size[0], size[1])
+                    elif obj.type == GeometryType.ELLIPSOID:
+                        result.uv_coords = self._compute_ellipsoid_uv(local_start, size)
+                    elif obj.type == GeometryType.CAPSULE:
+                        result.uv_coords = self._compute_capsule_uv(local_start, size[0], size[1])
+                    elif obj.type == GeometryType.PLANE:
+                        u = (local_start[0] / size[0] + 1.0) / 2.0
+                        v = (local_start[1] / size[1] + 1.0) / 2.0
+                        result.uv_coords = (u, v)
 
     def update_camera(self, new_config: Dict) -> None:
         """更新相机配置"""

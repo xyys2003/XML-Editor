@@ -64,7 +64,8 @@ class OpenGLWidget(QOpenGLWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.geometries = []
-        self.selected_geo = None
+        self.selected_geos = []  # 新增：存储多个选中对象
+        self.selected_geo = None  # 保留现有的单选，用于变换操作
         self.transform_mode = TransformMode.TRANSLATE
         self.current_mode = OperationMode.MODE_OBSERVE
         self.use_orthographic = False
@@ -190,69 +191,48 @@ class OpenGLWidget(QOpenGLWidget):
         gluLookAt(*eye_pos, *self._camera_target, 0, 0, 1)
         
         # 1. 绘制基础场景元素
-        # 绘制无限网格（在坐标轴之前）
         self.draw_infinite_grid()
-        # 绘制无限坐标轴（在网格之后）
         self.draw_infinite_axes()
         
-        # 2. 绘制非选中物体
-        for geo in self.geometries:
-            if geo != self.selected_geo:
-                # 检查是否有父级坐标系
-                if geo.parent:
-                    # 如果有父级，获取父级的变换矩阵
-                    parent_transform = geo.parent.transform_matrix  # 假设每个组都有transform_matrix属性
-                    self.draw_geometry(geo, parent_transform=parent_transform)
-                else:
-                    # 没有父级，使用默认值None
-                    self.draw_geometry(geo)
+        # 2. 绘制所有物体（包括选中物体的特殊效果）
+        self._draw_geometries_recursive(self.geometries)
         
-        # 3. 绘制选中物体（带特效）
-        if self.selected_geo:
-            # 3.1 绘制选中物体的轮廓
-            # self.draw_outline(self.selected_geo)
-            
-            # 3.2 绘制半透明的选中物体
-            glEnable(GL_BLEND)
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-            if geo.parent:
-                    # 如果有父级，获取父级的变换矩阵
-                    parent_transform = geo.parent.transform_matrix  # 假设每个组都有transform_matrix属性
-                    self.draw_geometry(geo, parent_transform=parent_transform,alpha=0.4)
-            else:
-                    # 没有父级，使用默认值None
-                    self.draw_geometry(geo)
+        # 3. 如果有选中物体，绘制变换控件
+        if self.selected_geo and self.current_mode != OperationMode.MODE_OBSERVE:
             glDisable(GL_BLEND)
-            
-            # 3.3 绘制高亮的包围盒
-            # self.draw_aabb(self.selected_geo, highlight=True)
-            
-            # 3.4 绘制右上方悬浮坐标系
-            # self.draw_floating_gizmo(self.selected_geo)
-            
-            # 3.5 在非观察模式下绘制变换控制器
-            if self.current_mode != OperationMode.MODE_OBSERVE:
-                self.draw_gizmo()
+            self.draw_gizmo()
         
-        # 4. 绘制调试信息（如果有）
-        # 绘制射线（如果存在）
-        if self.ray_origin is not None:
-            self._draw_ray()
-        
-        # 5. 绘制网格参考线
-        glBegin(GL_LINES)
-        glColor3f(0.4, 0.4, 0.4)
-        for x in range(-10, 11):
-            glVertex3f(x, 0, -10)
-            glVertex3f(x, 0, 10)
-        for z in range(-10, 11):
-            glVertex3f(-10, 0, z)
-            glVertex3f(10, 0, z)
-        glEnd()
-        
-        # 6. 绘制拖放预览（如果正在进行拖放操作）
+        # 4. 绘制拖放预览
         if hasattr(self, 'drag_preview') and self.drag_preview.get('active') and self.drag_preview.get('position') is not None:
             self._draw_drag_preview()
+
+    def _draw_geometries_recursive(self, geometries, skip_selected=True):
+        """递归绘制几何体和组
+        Args:
+            geometries: 要绘制的几何体/组列表
+            skip_selected: 是否使用选中对象的特殊绘制效果
+        """
+        for geo in geometries:
+            # 如果是组，递归绘制其子对象
+            if isinstance(geo, GeometryGroup):
+                self._draw_geometries_recursive(geo.children, skip_selected)
+                continue
+            
+            # 处理几何体的绘制
+            is_selected = (geo == self.selected_geo)
+            
+            # 如果是选中的对象且需要特殊处理
+            if is_selected and skip_selected:
+                if geo.parent:
+                    self.draw_geometry(geo, parent_transform=geo.parent.transform_matrix, alpha=0.75)
+                else:
+                    self.draw_geometry(geo)
+            # 如果是非选中对象或不需要特殊处理
+            else:
+                if geo.parent:
+                    self.draw_geometry(geo, parent_transform=geo.parent.transform_matrix)
+                else:
+                    self.draw_geometry(geo)
 
     def draw_geometry(self, geo, alpha=1.0, parent_transform=None):
         """绘制几何体"""
@@ -349,8 +329,8 @@ class OpenGLWidget(QOpenGLWidget):
             glutSolidCube(1.0)  # 缩放的立方体表示平面
         
         # 如果是选中状态，绘制轮廓
-        if hasattr(geo, 'selected') and geo.selected:
-            self.draw_outline(geo)
+        # if hasattr(geo, 'selected') and geo.selected:
+        #     self.draw_outline(geo)
         
         glPopMatrix()
 
@@ -844,31 +824,34 @@ class OpenGLWidget(QOpenGLWidget):
         self.update()  # 触发重绘
 
     def set_selection(self, geo):
-        """设置当前选中的几何体"""
-        try:
-            # 如果之前有选中的物体，取消其选中状态
-            if self.selected_geo:
-                self.selected_geo.selected = False
-                
+        """更新选中状态"""
+        # 检查是否按住了Ctrl键
+        ctrl_pressed = QApplication.keyboardModifiers() & Qt.ControlModifier
+        
+        if not ctrl_pressed:
+            # 没有按Ctrl，清除之前的选择，进行单选
+            self.selected_geos.clear()
             self.selected_geo = geo
-            
-            # 设置新选中物体的状态
             if geo:
-                geo.selected = True
-                print(f"已选中物体: {geo.name}")
-            else:
-                print("已取消选中")
-                
-            # 发出选择变更信号
-            self.selection_changed.emit(geo)
-            
-            # 更新显示
-            self.update()
-            
-        except Exception as e:
-            print(f"设置选中物体时出错: {str(e)}")
-            import traceback
-            traceback.print_exc()
+                self.selected_geos.append(geo)
+        else:
+            # 按住Ctrl进行多选
+            if geo:
+                if geo in self.selected_geos:
+                    # 如果对象已经被选中，则取消选择
+                    print(f"取消选中对象: {geo.name}")
+                    self.selected_geos.remove(geo)
+                    # 更新selected_geo为最后一个选中的对象
+                    self.selected_geo = self.selected_geos[-1] if self.selected_geos else None
+                else:
+                    print(f"添加新的选中对象: {geo.name}")
+                    # 添加新的选中对象
+                    self.selected_geos.append(geo)
+                    self.selected_geo = geo  # 最后选中的对象用于变换操作
+        
+        # 发送选择改变信号
+        self.selection_changed.emit(self.selected_geo)
+        self.update()
 
     def handle_camera_rotate(self, dx, dy):
         """相机旋转 - 更新球坐标参数"""
@@ -3465,6 +3448,138 @@ class OpenGLWidget(QOpenGLWidget):
             import traceback
             traceback.print_exc()
 
+    def _copy_object(self, obj):
+        """复制对象"""
+        # 如果_clipboard已经是列表（多选复制），直接返回
+        if isinstance(self._clipboard, list):
+            return
+            
+        # 单个对象复制
+        if isinstance(obj, Geometry):
+            self._clipboard = Geometry(
+                obj.type,
+                name=f"Copy of {obj.name}",
+                position=obj.position.copy(),
+                size=obj.size.copy(),
+                rotation=obj.rotation.copy()
+            )
+            # 复制材质属性
+            self._clipboard.material.color = obj.material.color.copy()
+        elif isinstance(obj, GeometryGroup):
+            self._clipboard = self._deep_copy_group(obj)
+
+    def _paste_object(self, target_obj):
+        """粘贴对象到目标位置"""
+        if not hasattr(self, '_clipboard') or self._clipboard is None:
+            return
+            
+        # 处理多选复制的情况
+        if isinstance(self._clipboard, list):
+            for original_obj in self._clipboard:
+                # 为每个对象创建副本
+                if isinstance(original_obj, Geometry):
+                    new_obj = Geometry(
+                        original_obj.type,
+                        name=f"Copy of {original_obj.name}",
+                        position=original_obj.position.copy(),
+                        size=original_obj.size.copy(),
+                        rotation=original_obj.rotation.copy()
+                    )
+                    new_obj.material.color = original_obj.material.color.copy()
+                else:  # GeometryGroup
+                    new_obj = self._deep_copy_group(original_obj)
+                    
+                # 添加到目标位置
+                if target_obj and target_obj.type == "group":
+                    target_obj.children.append(new_obj)
+                else:
+                    self.gl_widget.geometries.append(new_obj)
+        else:
+            # 单个对象复制的情况
+            if isinstance(self._clipboard, Geometry):
+                new_obj = Geometry(
+                    self._clipboard.type,
+                    name=f"Copy of {self._clipboard.name}",
+                    position=self._clipboard.position.copy(),
+                    size=self._clipboard.size.copy(),
+                    rotation=self._clipboard.rotation.copy()
+                )
+                new_obj.material.color = self._clipboard.material.color.copy()
+            else:  # GeometryGroup
+                new_obj = self._deep_copy_group(self._clipboard)
+                
+            # 添加到目标位置
+            if target_obj and target_obj.type == "group":
+                target_obj.children.append(new_obj)
+            else:
+                self.gl_widget.geometries.append(new_obj)
+        
+        # 刷新视图
+        self.refresh()
+        self.gl_widget.geometriesChanged.emit()
+
+    def _execute_multi_selection_action(self, action_func, *args):
+        """
+        对所有选中的对象执行指定操作
+        action_func: 要执行的操作函数
+        args: 传递给操作函数的参数
+        """
+        if not self.gl_widget.selected_geos:
+            return
+                
+        # 复制操作：存储所有选中对象的引用
+        if action_func == self._copy_object:
+            self._clipboard = self.gl_widget.selected_geos.copy()
+            return
+                
+        # 粘贴操作：先创建所有副本，然后再添加到目标位置
+        if action_func == self._paste_object:
+            target_obj = args[0] if args else None
+            if hasattr(self, '_clipboard') and self._clipboard:
+                # 先创建所有对象的深度副本
+                copies = []
+                for obj in self._clipboard:
+                    if isinstance(obj, Geometry):
+                        copy = Geometry(
+                            obj.type,
+                            name=f"Copy of {obj.name}",
+                            position=obj.position.copy(),
+                            size=obj.size.copy(),
+                            rotation=obj.rotation.copy()
+                        )
+                        copy.material.color = obj.material.color.copy()
+                        copies.append(copy)
+                    elif isinstance(obj, GeometryGroup):
+                        copies.append(self._deep_copy_group(obj))
+                
+                # 然后将所有副本添加到目标位置
+                for copy in copies:
+                    if target_obj:
+                        if isinstance(target_obj, GeometryGroup):
+                            target_obj.add_child(copy)
+                        else:
+                            # 如果目标不是组，添加到父组
+                            parent = target_obj.parent or self.gl_widget.geometries
+                            parent.add_child(copy)
+                    else:
+                        # 没有目标对象时添加到根级别
+                        self.gl_widget.geometries.append(copy)
+                
+                # 刷新视图
+                self.refresh()
+                self.gl_widget.geometriesChanged.emit()
+            return
+                
+        # 删除操作：直接逐个删除
+        if action_func == self._delete_object:
+            for obj in self.gl_widget.selected_geos:
+                self._delete_object(obj)
+            return
+                
+        # 其他操作：逐个执行
+        for obj in self.gl_widget.selected_geos:
+            action_func(obj, *args)
+
 
 
 # ========== 界面组件 ==========
@@ -4079,6 +4194,8 @@ class HierarchyTree(QDockWidget):
         
         # 初始化刷新
         self.refresh()
+        
+        self._clipboard = None  # 添加剪贴板变量
     
     def refresh(self):
         """刷新整个树"""
@@ -4132,8 +4249,16 @@ class HierarchyTree(QDockWidget):
     def _on_item_clicked(self, item, column):
         """处理项点击事件，允许选择组和几何体"""
         obj = self.item_to_obj.get(id(item))
-        if obj:
-            # 选中对象（组或几何体）
+        if not obj:
+            return
+        
+        # 检查是否按住Ctrl键
+        modifiers = QApplication.keyboardModifiers()
+        if modifiers == Qt.ControlModifier:
+            # 直接调用set_selection，让原有的ctrl_press逻辑处理多选
+            self.gl_widget.set_selection(obj)
+        else:
+            # 原有的单选逻辑
             self.gl_widget.set_selection(obj)
             
             # 展开或折叠组
@@ -4144,63 +4269,253 @@ class HierarchyTree(QDockWidget):
                     item.setExpanded(True)
     
     def update_selection(self, obj):
-        """更新树选择状态以匹配当前选中对象"""
-        # 清除所有选择
-        self.tree_widget.clearSelection()
-        
-        # 选中对应项
-        if obj in self.obj_to_item:
-            item = self.obj_to_item[obj]
-            item.setSelected(True)
+        """更新树形视图中的选中状态"""
+        # 首先清除所有项的高亮
+        iterator = QTreeWidgetItemIterator(self.tree_widget)  # 修改 self.tree 为 self.tree_widget
+        while iterator.value():
+            item = iterator.value()
+            item.setBackground(0, QColor(255, 255, 255))  # 白色背景
+            iterator += 1
             
-            # 确保项可见
-            self.tree_widget.scrollToItem(item)
+        # 为所有选中的对象设置蓝色背景
+        for selected_obj in self.gl_widget.selected_geos:
+            self._update_selection_recursive(self.tree_widget.invisibleRootItem(), selected_obj)
+    
+    def _update_selection_recursive(self, item, obj):
+        """递归更新选中状态"""
+        # 检查当前项
+        if hasattr(item, 'geo') and item.geo == obj:
+            item.setBackground(0, QColor(173, 216, 230))  # 设置浅蓝色背景
+            return True
             
-            # 展开父项以显示选中项
-            parent_item = item.parent()
-            while parent_item:
-                parent_item.setExpanded(True)
-                parent_item = parent_item.parent()
+        # 递归检查子项
+        for i in range(item.childCount()):
+            child = item.child(i)
+            if self._update_selection_recursive(child, obj):
+                return True
+                
+        return False
     
     def _show_context_menu(self, position):
-        """显示右键菜单"""
-        # 获取当前点击的项
+        """显示上下文菜单"""
         item = self.tree_widget.itemAt(position)
-        if item:
-            # 使用id(item)作为键来获取对应的对象
-            obj = self.item_to_obj.get(id(item))
+        if not item:
+            return
+        
+        obj = self.item_to_obj.get(id(item))
+        if not obj:
+            return
+
+        menu = QMenu()
+        
+        # 检查是否是多选状态
+        is_multi_select = len(self.gl_widget.selected_geos) > 1
+        
+        print(is_multi_select)
+
+        # 复制操作
+        copy_action = menu.addAction("复制")
+        copy_action.triggered.connect(
+            lambda: self._execute_multi_selection_action(self._copy_object) if is_multi_select 
+            else self._copy_object(obj)
+        )
+        
+        # 粘贴操作（仅当有复制内容且目标是组或根目录时可用）
+        if hasattr(self, '_clipboard') and self._clipboard:
+            paste_action = menu.addAction("粘贴")
+            paste_action.triggered.connect(
+                lambda: self._paste_object(obj)
+            )
+            # 只有组或根目录可以粘贴
+            paste_action.setEnabled(obj.type == "group")
+        
+        menu.addSeparator()
+        
+        # 删除操作
+        delete_action = menu.addAction("删除")
+        delete_action.triggered.connect(
+            lambda: self._execute_multi_selection_action(self._delete_object) if is_multi_select
+            else self._delete_object(obj)
+        )
+        
+        # 重命名操作（多选时禁用）
+        rename_action = menu.addAction("重命名")
+        rename_action.triggered.connect(lambda: self._rename_object(obj))
+        rename_action.setEnabled(not is_multi_select)
+        
+        # 添加子对象的操作（仅对组对象可用，多选时禁用）
+        if obj.type == "group" and not is_multi_select:
+            menu.addSeparator()
+            add_menu = menu.addMenu("添加")
             
-            menu = QMenu()
+            # 添加几何体
+            geometry_types = {
+                'BOX': GeometryType.BOX,
+                'SPHERE': GeometryType.SPHERE,
+                'CYLINDER': GeometryType.CYLINDER,
+                'CAPSULE': GeometryType.CAPSULE,
+                'PLANE': GeometryType.PLANE,
+                'ELLIPSOID': GeometryType.ELLIPSOID
+            }
             
-            # 根据对象类型添加不同菜单项
-            if obj.type == "group":
-                # 组特有菜单
-                add_geo_menu = menu.addMenu("添加几何体")
+            for name, geo_type in geometry_types.items():
+                action = add_menu.addAction(name)
+                action.triggered.connect(
+                    lambda checked, t=geo_type: self._add_geometry_to_group(obj, t)
+                )
+            
+            # 添加组
+            add_menu.addSeparator()
+            add_group_action = add_menu.addAction("组")
+            add_group_action.triggered.connect(
+                lambda: self._add_group_to_group(obj)
+            )
+        
+        # 添加组合选项（仅在多选时显示）
+        if is_multi_select:
+            menu.addSeparator()
+            combine_action = menu.addAction("组合所选对象")
+            combine_action.triggered.connect(self._combine_selected_to_group)
+        
+        menu.exec_(self.tree_widget.viewport().mapToGlobal(position))
+
+    def _combine_selected_to_group(self):
+        """将选中的对象组合到一个新组中"""
+        if len(self.gl_widget.selected_geos) <= 1:
+            return
+            
+        # 创建新组
+        new_group = GeometryGroup(name="Combined Group")
+        
+        # 获取所有选中对象的父组
+        parents = []
+        for obj in self.gl_widget.selected_geos:
+            if obj.parent:
+                parents.append(obj.parent)
+            else:
+                parents.append(self.gl_widget.geometries)
+        
+        # 如果所有对象都在同一个父组下，使用该父组
+        # 否则添加到根级别
+        common_parent = parents[0] if all(p == parents[0] for p in parents) else self.gl_widget.geometries
+        
+        # 从原位置移除对象并添加到新组
+        for obj in self.gl_widget.selected_geos:
+            if obj.parent:
+                obj.parent.remove_child(obj)
+            else:
+                if obj in self.gl_widget.geometries:
+                    self.gl_widget.geometries.remove(obj)
+            new_group.add_child(obj)
+        
+        # 将新组添加到父组
+        if isinstance(common_parent, list):
+            common_parent.append(new_group)
+        else:
+            common_parent.add_child(new_group)
+        
+        # 更新选择为新组
+        self.gl_widget.set_selection(new_group)
+        
+        # 刷新视图
+        self.refresh()
+        self.gl_widget.geometriesChanged.emit()
+    
+    def _copy_object(self, obj):
+        """复制对象"""
+        # 如果_clipboard已经是列表（多选复制），直接返回
+        if isinstance(self._clipboard, list):
+            return
+            
+        # 单个对象复制
+        if isinstance(obj, Geometry):
+            self._clipboard = Geometry(
+                obj.type,
+                name=f"Copy of {obj.name}",
+                position=obj.position.copy(),
+                size=obj.size.copy(),
+                rotation=obj.rotation.copy()
+            )
+            # 复制材质属性
+            self._clipboard.material.color = obj.material.color.copy()
+        elif isinstance(obj, GeometryGroup):
+            self._clipboard = self._deep_copy_group(obj)
+
+    def _deep_copy_group(self, group):
+        """深度复制组及其所有子对象"""
+        new_group = GeometryGroup(
+            name=f"Copy of {group.name}",
+            position=group.position.copy(),
+            rotation=group.rotation.copy()
+        )
+        
+        # 递归复制所有子对象
+        for child in group.children:
+            if isinstance(child, Geometry):
+                new_child = Geometry(
+                    child.type,
+                    name=f"Copy of {child.name}",
+                    position=child.position.copy(),
+                    size=child.size.copy(),
+                    rotation=child.rotation.copy()
+                )
+                new_child.material.color = child.material.color.copy()
+                new_group.add_child(new_child)
+            elif isinstance(child, GeometryGroup):
+                new_child = self._deep_copy_group(child)
+                new_group.add_child(new_child)
                 
-                # 添加各种几何体类型
-                for geo_type in [GeometryType.BOX, GeometryType.SPHERE, 
-                                GeometryType.CYLINDER, GeometryType.CAPSULE,
-                                GeometryType.PLANE, GeometryType.ELLIPSOID]:
-                    action = add_geo_menu.addAction(geo_type.capitalize())
-                    action.setData(("add_geo", obj, geo_type))
+        return new_group
+
+    def _paste_object(self, target_obj):
+        """粘贴对象到目标位置"""
+        if not hasattr(self, '_clipboard') or self._clipboard is None:
+            return
+            
+        # 处理多选复制的情况
+        if isinstance(self._clipboard, list):
+            for original_obj in self._clipboard:
+                # 为每个对象创建副本
+                if isinstance(original_obj, Geometry):
+                    new_obj = Geometry(
+                        original_obj.type,
+                        name=f"Copy of {original_obj.name}",
+                        position=original_obj.position.copy(),
+                        size=original_obj.size.copy(),
+                        rotation=original_obj.rotation.copy()
+                    )
+                    new_obj.material.color = original_obj.material.color.copy()
+                else:  # GeometryGroup
+                    new_obj = self._deep_copy_group(original_obj)
+                    
+                # 添加到目标位置
+                if target_obj and target_obj.type == "group":
+                    target_obj.children.append(new_obj)
+                else:
+                    self.gl_widget.geometries.append(new_obj)
+        else:
+            # 单个对象复制的情况
+            if isinstance(self._clipboard, Geometry):
+                new_obj = Geometry(
+                    self._clipboard.type,
+                    name=f"Copy of {self._clipboard.name}",
+                    position=self._clipboard.position.copy(),
+                    size=self._clipboard.size.copy(),
+                    rotation=self._clipboard.rotation.copy()
+                )
+                new_obj.material.color = self._clipboard.material.color.copy()
+            else:  # GeometryGroup
+                new_obj = self._deep_copy_group(self._clipboard)
                 
-                # 添加子组
-                add_group_action = menu.addAction("添加子组")
-                add_group_action.setData(("add_group", obj))
-            
-            # 共有菜单项
-            rename_action = menu.addAction("重命名")
-            rename_action.setData(("rename", obj))
-            
-            delete_action = menu.addAction("删除")
-            delete_action.setData(("delete", obj))
-            
-            # 显示菜单并处理选择
-            selected_action = menu.exec_(self.tree_widget.mapToGlobal(position))
-            if selected_action:
-                action_data = selected_action.data()
-                if action_data:
-                    self._handle_context_action(action_data)
+            # 添加到目标位置
+            if target_obj and target_obj.type == "group":
+                target_obj.children.append(new_obj)
+            else:
+                self.gl_widget.geometries.append(new_obj)
+        
+        # 刷新视图
+        self.refresh()
+        self.gl_widget.geometriesChanged.emit()
     
     def _handle_context_action(self, action_data):
         """处理上下文菜单动作"""
@@ -4249,7 +4564,7 @@ class HierarchyTree(QDockWidget):
             )
             print(2,geo.name)
             self.gl_widget.add_geometry(geo,parent_group)
-            self.gl_widget.geometries.append(geo)
+            # self.gl_widget.geometries.append(geo)
 
             
             # 刷新层级树
@@ -4360,6 +4675,122 @@ class HierarchyTree(QDockWidget):
         if obj:
             self._delete_object(obj)
 
+    def _handle_copy_shortcut(self):
+        """处理复制快捷键"""
+        if self.gl_widget.selected_geo:
+            self._copy_object(self.gl_widget.selected_geo)
+            
+    def _handle_paste_shortcut(self):
+        """处理粘贴快捷键"""
+        if self._clipboard is not None:
+            self._paste_object(None)  # 粘贴到根级别
+
+    def _execute_multi_selection_action(self, action_func, *args):
+        """
+        对所有选中的对象执行指定操作
+        action_func: 要执行的操作函数
+        args: 传递给操作函数的参数
+        """
+        if not self.gl_widget.selected_geos:
+            return
+                
+        # 复制操作：存储所有选中对象的引用
+        if action_func == self._copy_object:
+            self._clipboard = self.gl_widget.selected_geos.copy()
+            return
+                
+        # 粘贴操作：先创建所有副本，然后再添加到目标位置
+        if action_func == self._paste_object:
+            target_obj = args[0] if args else None
+            if hasattr(self, '_clipboard') and self._clipboard:
+                # 先创建所有对象的深度副本
+                copies = []
+                for obj in self._clipboard:
+                    if isinstance(obj, Geometry):
+                        copy = Geometry(
+                            obj.type,
+                            name=f"Copy of {obj.name}",
+                            position=obj.position.copy(),
+                            size=obj.size.copy(),
+                            rotation=obj.rotation.copy()
+                        )
+                        copy.material.color = obj.material.color.copy()
+                        copies.append(copy)
+                    elif isinstance(obj, GeometryGroup):
+                        copies.append(self._deep_copy_group(obj))
+                
+                # 然后将所有副本添加到目标位置
+                for copy in copies:
+                    if target_obj:
+                        if isinstance(target_obj, GeometryGroup):
+                            target_obj.add_child(copy)
+                        else:
+                            # 如果目标不是组，添加到父组
+                            parent = target_obj.parent or self.gl_widget.geometries
+                            parent.add_child(copy)
+                    else:
+                        # 没有目标对象时添加到根级别
+                        self.gl_widget.geometries.append(copy)
+                
+                # 刷新视图
+                self.refresh()
+                self.gl_widget.geometriesChanged.emit()
+            return
+                
+        # 删除操作：直接逐个删除
+        if action_func == self._delete_object:
+            for obj in self.gl_widget.selected_geos:
+                self._delete_object(obj)
+            return
+                
+        # 其他操作：逐个执行
+        for obj in self.gl_widget.selected_geos:
+            action_func(obj, *args)
+
+    def _handle_context_action(self, action_data):
+        """处理右键菜单动作"""
+        action, obj = action_data
+        
+        # 检查是否是多选状态
+        has_multi_selection = len(self.gl_widget.selected_geos) > 1
+        
+        if action == "copy":
+            if has_multi_selection:
+                self._execute_multi_selection_action(self._copy_object)
+            else:
+                self._copy_object(obj)
+                
+        elif action == "paste":
+            if has_multi_selection:
+                self._execute_multi_selection_action(self._paste_object, obj)
+            else:
+                self._paste_object(obj)
+                
+        elif action == "delete":
+            if has_multi_selection:
+                self._execute_multi_selection_action(self._delete_object)
+            else:
+                self._delete_object(obj)
+                
+        elif action == "rename":
+            if has_multi_selection:
+                self._execute_multi_selection_action(self._rename_object)
+            else:
+                self._rename_object(obj)
+                
+        elif action == "add_geometry":
+            geo_type = obj  # 在这种情况下，obj是几何体类型
+            if has_multi_selection:
+                self._execute_multi_selection_action(self._add_geometry_to_group, geo_type)
+            else:
+                self._add_geometry_to_group(self.gl_widget.selected_geo, geo_type)
+                
+        elif action == "add_group":
+            if has_multi_selection:
+                self._execute_multi_selection_action(self._add_group_to_group)
+            else:
+                self._add_group_to_group(obj)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -4389,8 +4820,37 @@ class MainWindow(QMainWindow):
         # 创建菜单栏
         self.create_menus()
         
+        # 添加全局快捷键
+        self.setup_shortcuts()
+        
         # 设置窗口大小
         self.resize(1200, 800)
+    
+    def setup_shortcuts(self):
+        """设置全局快捷键"""
+        # 复制快捷键
+        copy_shortcut = QShortcut(QKeySequence.Copy, self)
+        copy_shortcut.activated.connect(self._handle_copy)
+        
+        # 粘贴快捷键
+        paste_shortcut = QShortcut(QKeySequence.Paste, self)
+        paste_shortcut.activated.connect(self._handle_paste)
+    
+    def _handle_copy(self):
+        """处理复制快捷键"""
+        if len(self.gl_widget.selected_geos) > 1:
+            self.hierarchy_tree._execute_multi_selection_action(
+                self.hierarchy_tree._copy_object
+            )
+        elif self.gl_widget.selected_geo:
+            self.hierarchy_tree._copy_object(self.gl_widget.selected_geo)
+    
+    def _handle_paste(self):
+        """处理粘贴快捷键"""
+        if self.hierarchy_tree._clipboard is not None:
+            # 不论是单选还是多选，都使用同一个粘贴逻辑
+            selected_obj = self.gl_widget.selected_geo
+            self.hierarchy_tree._paste_object(selected_obj)
     
     def create_menus(self):
         # 文件菜单

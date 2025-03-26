@@ -236,6 +236,10 @@ class GeometryGroup(QObject):
         
         # 组合变换
         self.transform_matrix = translation_matrix @ rotation_matrix
+        
+        # 如果有父组，需要考虑父组的变换
+        if self.parent:
+            self.transform_matrix = self.parent.transform_matrix @ self.transform_matrix
     
     def _update_children_transforms(self):
         """更新所有子对象的变换，传播变换矩阵到子项"""
@@ -249,17 +253,8 @@ class GeometryGroup(QObject):
             if hasattr(child, '_update_transform'):
                 child._update_transform()
             
-            # 将子对象的局部变换矩阵与父级(this)的变换矩阵相乘
-            # 这样可以获得子对象从局部坐标到世界坐标的完整变换
-            if hasattr(child, 'transform_matrix'):
-                # 保存原始的局部变换矩阵
-                local_transform = child.transform_matrix.copy()
-                
-                # 计算世界变换矩阵 = 父级变换 * 局部变换
-                child.transform_matrix = np.dot(self.transform_matrix, local_transform)
-            
             # 如果子对象是组，递归更新其子项
-            if child.type == "group":
+            if isinstance(child, GeometryGroup):
                 child._update_children_transforms()
     
     def add_child(self, child):
@@ -288,9 +283,8 @@ class GeometryGroup(QObject):
     
     def get_world_transform(self):
         """计算组的世界变换矩阵，包括所有父组的变换"""
-        if self.parent:
-            parent_transform = self.parent.get_world_transform()
-            return parent_transform @ self.transform_matrix
+        if not hasattr(self, 'transform_matrix'):
+            self._update_transform()
         return self.transform_matrix.copy()  # 返回副本以避免修改原始矩阵
     
     def get_world_position(self):
