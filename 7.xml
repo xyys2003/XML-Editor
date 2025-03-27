@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="scene_export">
+  <compiler angle="degree" coordinate="local" eulerseq="xyz"/>
+  <option>
+    <flag contact="disable" gravity="disable"/>
+  </option>
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" rgb1=".8 .8 .8" rgb2=".9 .9 .9" width="300" height="300"/>
+    <material name="grid" texture="grid" texrepeat="8 8"/>
+    <material name="default" rgba=".8 .8 .8 1"/>
+  </asset>
+  <worldbody>
+    <light name="top" pos="0 0 2" dir="0 0 -1"/>
+    <geom name="x_axis" type="cylinder" size="0.02 5" rgba="1 0 0 1" euler="0 90 0" pos="0 0 0"/>
+    <geom name="y_axis" type="cylinder" size="0.02 5" rgba="0 1 0 1" euler="90 0 0" pos="0 0 0"/>
+    <geom name="z_axis" type="cylinder" size="0.02 5" rgba="0 0 1 1" pos="0 0 0"/>
+    <geom name="ground" type="plane" size="50 50 0.1" pos="0 0 0" material="grid"/>
+    <body name="0_立方体_1" pos="0.0 0.0 0.0">
+      <geom name="0_立方体_1_geom" type="box" size="0.25 0.25 0.25" rgba="0.800000011920929 0.5 0.20000000298023224 1.0"/>
+    </body>
+  </worldbody>
+</mujoco>
