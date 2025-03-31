@@ -1594,13 +1594,13 @@ class OpenGLWidget(QOpenGLWidget):
         # 根据活动轴应用平移
         if self.active_axis == 'x':
             # 在X轴方向平移
-            self.selected_geo.position[0] += dx * scale_factor
+            self.selected_geo.position[0] -= dx * scale_factor
         elif self.active_axis == 'y':
             # 在Y轴方向平移
             self.selected_geo.position[1] += dx * scale_factor
         elif self.active_axis == 'z':
             # 在Z轴方向平移
-            self.selected_geo.position[2] += dx * scale_factor
+            self.selected_geo.position[2] -= dx * scale_factor
         
         # 如果是组，确保更新子对象的变换
         if self.selected_geo.type == "group":
@@ -1656,8 +1656,15 @@ class OpenGLWidget(QOpenGLWidget):
             ]
             
             # 计算视图方向与各坐标轴的点积，确定拖动方向
-            if self.active_axis < 3:  # 单轴缩放
-                axis_vector = axis_vectors[self.active_axis]
+            # 将字符串的 active_axis 转换为数值索引
+            if isinstance(self.active_axis, str):
+                axis_map = {'x': 0, 'y': 1, 'z': 2, 'xyz': 3}
+                axis_index = axis_map.get(self.active_axis.lower(), -1)
+            else:
+                axis_index = self.active_axis
+            
+            if axis_index < 3:  # 单轴缩放
+                axis_vector = axis_vectors[axis_index]
                 
                 # 计算视图与轴之间的点积，决定正负方向
                 view_dot = np.dot(view_dir, axis_vector)
@@ -1674,15 +1681,15 @@ class OpenGLWidget(QOpenGLWidget):
                 current_size = list(self.selected_geo.size)
                 
                 # 应用缩放
-                current_size[self.active_axis] += drag_amount
+                current_size[axis_index] += drag_amount
                 
                 # 确保尺寸不会太小
-                current_size[self.active_axis] = max(0.1, current_size[self.active_axis])
+                current_size[axis_index] = max(0.1, current_size[axis_index])
                 
                 # 应用新的尺寸
                 self.selected_geo.size = current_size
             
-            elif self.active_axis == 3:  # 均匀缩放（中心控件）
+            elif axis_index == 3:  # 均匀缩放（中心控件）
                 # 对于均匀缩放，使用水平和垂直拖动的平均值
                 drag_amount = (dx + dy) * 0.005
                 
@@ -2013,8 +2020,15 @@ class OpenGLWidget(QOpenGLWidget):
             ]
             
             # 计算视图方向与各坐标轴的点积，确定拖动方向
-            if self.active_axis < 3:  # 单轴缩放
-                axis_vector = axis_vectors[self.active_axis]
+            # 将字符串的 active_axis 转换为数值索引
+            if isinstance(self.active_axis, str):
+                axis_map = {'x': 0, 'y': 1, 'z': 2, 'xyz': 3}
+                axis_index = axis_map.get(self.active_axis.lower(), -1)
+            else:
+                axis_index = self.active_axis
+            
+            if axis_index < 3:  # 单轴缩放
+                axis_vector = axis_vectors[axis_index]
                 
                 # 计算视图与轴之间的点积，决定正负方向
                 view_dot = np.dot(view_dir, axis_vector)
@@ -2031,15 +2045,379 @@ class OpenGLWidget(QOpenGLWidget):
                 current_size = list(self.selected_geo.size)
                 
                 # 应用缩放
-                current_size[self.active_axis] += drag_amount
+                current_size[axis_index] += drag_amount
                 
                 # 确保尺寸不会太小
-                current_size[self.active_axis] = max(0.1, current_size[self.active_axis])
+                current_size[axis_index] = max(0.1, current_size[axis_index])
                 
                 # 应用新的尺寸
                 self.selected_geo.size = current_size
             
-            elif self.active_axis == 3:  # 均匀缩放（中心控件）
+            elif axis_index == 3:  # 均匀缩放（中心控件）
+                # 对于均匀缩放，使用水平和垂直拖动的平均值
+                drag_amount = (dx + dy) * 0.005
+                
+                # 获取当前尺寸
+                current_size = list(self.selected_geo.size)
+                
+                # 均匀应用缩放
+                for i in range(3):
+                    current_size[i] += drag_amount
+                    current_size[i] = max(0.1, current_size[i])
+                
+                # 应用新的尺寸
+                self.selected_geo.size = current_size
+            
+            # 如果是组，确保更新子对象的变换
+            if self.selected_geo.type == "group":
+                if hasattr(self.selected_geo, '_update_transform'):
+                    self.selected_geo._update_transform()
+                if hasattr(self.selected_geo, '_update_children_transforms'):
+                    self.selected_geo._update_children_transforms()
+        
+        except Exception as e:
+            print(f"缩放拖拽出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def check_camera_consistency(self):
+        """检查相机配置与OpenGL状态的一致性"""
+        # 获取当前OpenGL矩阵
+        current_projection = glGetFloatv(GL_PROJECTION_MATRIX)
+        current_modelview = glGetFloatv(GL_MODELVIEW_MATRIX)
+        
+        # 将NumPy矩阵转换为适合比较的格式(列主序)
+        config_proj = self.camera_config['projection'].T.flatten()
+        config_view = self.camera_config['view'].T.flatten()
+        
+        # 转换为列表进行比较
+        gl_proj = current_projection.flatten()
+        gl_view = current_modelview.flatten()
+        
+        # 检查矩阵差异
+        proj_diff = np.mean(np.abs(gl_proj - config_proj))
+        view_diff = np.mean(np.abs(gl_view - config_view))
+        
+        # 输出差异信息
+        if proj_diff > 0.01 or view_diff > 0.01:
+            print(f"警告: 相机配置与OpenGL状态不一致 (投影差异: {proj_diff:.5f}, 视图差异: {view_diff:.5f})")
+            # 可以考虑自动同步
+            return False
+        
+        # 检查与射线投射器的一致性
+        if hasattr(self, 'raycaster'):
+            # 这里需要假设raycaster有一个获取相机配置的方法
+            # 如果没有，应该在raycaster中添加
+            raycaster_camera = getattr(self.raycaster, '_camera_config', None)
+            if raycaster_camera is not None:
+                # 检查关键参数是否一致
+                pos_diff = np.linalg.norm(raycaster_camera['position'] - self.camera_config['position'])
+                if pos_diff > 0.001:
+                    print(f"警告: 射线投射器相机位置与主相机不一致 (差异: {pos_diff:.5f})")
+                    return False
+        
+        return True
+    
+    
+    def draw_outline(self, geo, parent_transform=None):
+        """绘制物体轮廓，用于突出显示选中的物体"""
+        if not geo:
+            return
+            
+        # 保存当前OpenGL状态
+        glPushAttrib(GL_ALL_ATTRIB_BITS)
+        
+        # 禁用光照和深度写入
+        glDisable(GL_LIGHTING)
+        glDepthMask(GL_FALSE)
+        
+        # 使用线框模式
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+        
+        # 设置线宽和颜色
+        glLineWidth(3.0)
+        glColor4f(1.0, 0.8, 0.0, 1.0)  # 明亮的黄色
+        
+        # 缩放略大一点绘制轮廓
+        glPushMatrix()
+        glTranslatef(*geo.position)
+        glRotatef(geo.rotation[0], 1, 0, 0)
+        glRotatef(geo.rotation[1], 0, 1, 0)
+        glRotatef(geo.rotation[2], 0, 0, 1)
+        
+        # 比原始大小略大
+        scale_factor = 1.02
+        if geo.type == GeometryType.BOX:
+            glScalef(*(geo.size * 2.0 * scale_factor))
+            glutWireCube(1.0)
+        elif geo.type == GeometryType.SPHERE:
+            glutWireSphere(geo.size[0] * scale_factor, 20, 20)
+        elif geo.type == GeometryType.ELLIPSOID:
+            glScalef(*(geo.size * scale_factor))
+            glutWireSphere(1.0, 20, 20)
+        elif geo.type == GeometryType.CYLINDER:
+            radius = geo.size[0] * scale_factor
+            height = geo.size[1] * 2 * scale_factor
+            glRotatef(90, 1, 0, 0)
+            glutWireCylinder(radius, height, 20, 8)
+        elif geo.type == GeometryType.CAPSULE:
+            radius = geo.size[0] * scale_factor
+            half_height = geo.size[1] * scale_factor  # 这里是半高
+            
+            # 旋转为匹配MuJoCo的胶囊体方向(z轴朝上)
+            glRotatef(90, 1, 0, 0)
+            
+            # 绘制圆柱部分 - 长度为两倍的half_height
+            glutWireCylinder(radius, half_height * 2, 20, 8)
+            
+            # 顶部半球 - 位于圆柱体顶端
+            glPushMatrix()
+            glTranslatef(0, 0, half_height)
+            # 绘制完整球体，只有一半会在圆柱体外部可见
+            quadric = gluNewQuadric()
+            gluQuadricDrawStyle(quadric, GLU_LINE)
+            gluSphere(quadric, radius, 16, 8)
+            gluDeleteQuadric(quadric)
+            glPopMatrix()
+            
+            # 底部半球 - 位于圆柱体底端
+            glPushMatrix()
+            glTranslatef(0, 0, -half_height)
+            quadric = gluNewQuadric()
+            gluQuadricDrawStyle(quadric, GLU_LINE)
+            gluSphere(quadric, radius, 16, 8)
+            gluDeleteQuadric(quadric)
+            glPopMatrix()
+        
+        elif geo.type == GeometryType.PLANE:
+            # 绘制平面轮廓 - 更清晰地表示为网格
+            width = geo.size[0] * 2 * scale_factor  # x方向尺寸
+            depth = geo.size[2] * 2 * scale_factor  # z方向尺寸
+            
+            # 不使用glScalef，直接绘制具体尺寸的平面
+            # 绘制平面边界
+            glBegin(GL_LINE_LOOP)
+            glVertex3f(-width/2, 0, -depth/2)
+            glVertex3f(width/2, 0, -depth/2)
+            glVertex3f(width/2, 0, depth/2)
+            glVertex3f(-width/2, 0, depth/2)
+            glEnd()
+            
+            # 绘制网格线
+            grid_div = 4
+            glBegin(GL_LINES)
+            # X方向线
+            for i in range(1, grid_div):
+                t = i / grid_div
+                z = depth * (t - 0.5)
+                glVertex3f(-width/2, 0, z)
+                glVertex3f(width/2, 0, z)
+            
+            # Z方向线
+            for i in range(1, grid_div):
+                t = i / grid_div
+                x = width * (t - 0.5)
+                glVertex3f(x, 0, -depth/2)
+                glVertex3f(x, 0, depth/2)
+            glEnd()
+            
+            # 绘制法线
+            glBegin(GL_LINES)
+            glVertex3f(0, 0, 0)
+            glVertex3f(0, width/10, 0)  # 法线长度为平面宽度的十分之一
+            glEnd()
+        
+        glPopMatrix()
+        
+        # 恢复OpenGL状态
+        glPopAttrib()
+
+    def _draw_ray(self):
+        glDisable(GL_LIGHTING)
+        glLineWidth(2.0)
+        
+        # 绘制基础射线（红色）
+        glColor3f(1.0, 0.0, 0.0)
+        glBegin(GL_LINES)
+        print(self.ray_origin)
+
+        glVertex3fv(self.ray_origin)
+        glVertex3fv(self.ray_origin + self.ray_direction * 100)  # 延伸100单位
+        glEnd()
+        
+        # 绘制命中点（绿色方块）
+        if self.ray_hit_point is not None:
+            glPushMatrix()
+            glTranslatef(*self.ray_hit_point)
+            glColor3f(0.0, 1.0, 0.0)
+            glutSolidCube(0.2)  # 绘制边长为0.2的立方体
+            glPopMatrix()
+        
+        glEnable(GL_LIGHTING)
+
+    def detect_axis(self, mouse_pos):
+        """检测鼠标与哪个轴相交"""
+        if not self.selected_geo:
+            return -1
+            
+        try:
+            if self.current_mode in [OperationMode.MODE_TRANSLATE, OperationMode.MODE_SCALE]:
+                # 平移和缩放模式都使用浮动坐标系的轴检测
+                return self.detect_floating_axis(mouse_pos)
+            elif self.current_mode == OperationMode.MODE_ROTATE:
+                # 旋转模式使用旋转轴检测
+                return self._detect_rotation_axis(mouse_pos, self.selected_geo.position)
+                
+            return -1
+        except Exception as e:
+            print(f"轴检测出错: {str(e)}")
+            return -1
+
+    def handle_axis_drag(self, dx, dy):
+        """统一处理轴向拖动"""
+        if not hasattr(self, 'active_axis') or not self.selected_geo:
+            return
+            
+        # 根据当前操作模式调用相应的处理函数
+        if self.current_mode == OperationMode.MODE_TRANSLATE:
+            self._handle_translate_drag(dx, dy)
+        elif self.current_mode == OperationMode.MODE_ROTATE:
+            # 根据活动轴确定旋转方向
+            rotation_amount = dx * 0.5  # 可以调整这个系数来控制旋转速度
+            
+            # 根据选中的轴更新相应的旋转角度
+            if self.active_axis == 'x':
+                self.selected_geo.rotation[0] += rotation_amount
+            elif self.active_axis == 'y':
+                self.selected_geo.rotation[1] += rotation_amount
+            elif self.active_axis == 'z':
+                self.selected_geo.rotation[2] += rotation_amount
+            
+            # 更新变换
+            if hasattr(self.selected_geo, '_update_transform'):
+                self.selected_geo._update_transform()
+            
+            # 如果是组，更新所有子对象
+            if self.selected_geo.type == "group":
+                self.update_group_transforms_recursive(self.selected_geo)
+                
+        elif self.current_mode == OperationMode.MODE_SCALE:
+            self._handle_scale_drag(dx, dy)
+            
+        self.update()
+
+    def _handle_translate_drag(self, dx, dy):
+        """处理平移拖拽，支持组和子物体一起移动"""
+        if not self.selected_geo:
+            return
+            
+        # 获取相机方向向量
+        camera_pos = self.camera_config['position']
+        camera_dir = self._camera_target - camera_pos
+        camera_dist = np.linalg.norm(camera_dir)
+        
+        # 计算缩放因子（基于相机距离）
+        scale_factor = 0.01 * camera_dist
+        
+        # 根据活动轴应用平移
+        if self.active_axis == 'x':
+            # 在X轴方向平移
+            self.selected_geo.position[0] += dx * scale_factor
+        elif self.active_axis == 'y':
+            # 在Y轴方向平移
+            self.selected_geo.position[1] += dx * scale_factor
+        elif self.active_axis == 'z':
+            # 在Z轴方向平移
+            self.selected_geo.position[2] += dx * scale_factor
+        
+        # 如果是组，确保更新子对象的变换
+        if self.selected_geo.type == "group":
+            self.selected_geo._update_transform()  # 先更新自身变换矩阵
+            self.selected_geo._update_children_transforms()  # 然后更新所有子对象
+        
+        # 确保每次操作后立即更新视图
+        self.update()
+
+    def _handle_rotate_drag(self, dx, dy):
+        """处理旋转拖拽，支持组和子物体一起旋转"""
+        if not self.selected_geo:
+            return
+            
+        # 旋转速度因子
+        rotation_speed = 0.5
+        
+        # 根据活动轴应用旋转
+        if self.active_axis == 'x':
+            self.selected_geo.rotation[0] += dx * rotation_speed
+        elif self.active_axis == 'y':
+            self.selected_geo.rotation[1] += dx * rotation_speed
+        elif self.active_axis == 'z':
+            self.selected_geo.rotation[2] += dx * rotation_speed
+        
+        # 如果是组，确保更新子对象的变换
+        if self.selected_geo.type == "group":
+            self.selected_geo._update_transform()  # 先更新自身变换矩阵
+            self.selected_geo._update_children_transforms()  # 然后更新所有子对象
+        
+        # 确保每次操作后立即更新视图
+        self.update()
+
+    def _handle_scale_drag(self, dx, dy):
+        """处理缩放拖拽，将鼠标拖动转换为物体缩放"""
+        if not self.selected_geo or self.active_axis == -1:
+            return
+        
+        try:
+            # 获取鼠标移动在屏幕中的位置变化
+            screen_dx = dx
+            screen_dy = dy
+            
+            # 获取当前视图方向
+            view_dir = self._camera_target - self.camera_config['position']
+            view_dir = view_dir / np.linalg.norm(view_dir)
+            
+            # 定义三个坐标轴方向向量
+            axis_vectors = [
+                np.array([1, 0, 0]),  # X轴
+                np.array([0, 1, 0]),  # Y轴
+                np.array([0, 0, 1])   # Z轴
+            ]
+            
+            # 计算视图方向与各坐标轴的点积，确定拖动方向
+            # 将字符串的 active_axis 转换为数值索引
+            if isinstance(self.active_axis, str):
+                axis_map = {'x': 0, 'y': 1, 'z': 2, 'xyz': 3}
+                axis_index = axis_map.get(self.active_axis.lower(), -1)
+            else:
+                axis_index = self.active_axis
+            
+            if axis_index < 3:  # 单轴缩放
+                axis_vector = axis_vectors[axis_index]
+                
+                # 计算视图与轴之间的点积，决定正负方向
+                view_dot = np.dot(view_dir, axis_vector)
+                
+                # 计算有效拖动量：水平拖动(dx)更符合直觉
+                # 如果轴与视图接近垂直，使用垂直拖动(dy)
+                if abs(view_dot) < 0.3:
+                    drag_amount = -dy * 0.01  # 垂直拖动，上移增大
+                else:
+                    # 确定水平拖动方向（右移增大还是左移增大）
+                    drag_amount = dx * 0.01 * (1 if view_dot < 0 else -1)
+                
+                # 获取当前尺寸
+                current_size = list(self.selected_geo.size)
+                
+                # 应用缩放
+                current_size[axis_index] += drag_amount
+                
+                # 确保尺寸不会太小
+                current_size[axis_index] = max(0.1, current_size[axis_index])
+                
+                # 应用新的尺寸
+                self.selected_geo.size = current_size
+            
+            elif axis_index == 3:  # 均匀缩放（中心控件）
                 # 对于均匀缩放，使用水平和垂直拖动的平均值
                 drag_amount = (dx + dy) * 0.005
                 
@@ -4773,49 +5151,7 @@ class HierarchyTree(QDockWidget):
         for obj in self.gl_widget.selected_geos:
             action_func(obj, *args)
 
-    def _handle_context_action(self, action_data):
-        """处理右键菜单动作"""
-        action, obj = action_data
-        
-        # 检查是否是多选状态
-        has_multi_selection = len(self.gl_widget.selected_geos) > 1
-        
-        if action == "copy":
-            if has_multi_selection:
-                self._execute_multi_selection_action(self._copy_object)
-            else:
-                self._copy_object(obj)
-                
-        elif action == "paste":
-            if has_multi_selection:
-                self._execute_multi_selection_action(self._paste_object, obj)
-            else:
-                self._paste_object(obj)
-                
-        elif action == "delete":
-            if has_multi_selection:
-                self._execute_multi_selection_action(self._delete_object)
-            else:
-                self._delete_object(obj)
-                
-        elif action == "rename":
-            if has_multi_selection:
-                self._execute_multi_selection_action(self._rename_object)
-            else:
-                self._rename_object(obj)
-                
-        elif action == "add_geometry":
-            geo_type = obj  # 在这种情况下，obj是几何体类型
-            if has_multi_selection:
-                self._execute_multi_selection_action(self._add_geometry_to_group, geo_type)
-            else:
-                self._add_geometry_to_group(self.gl_widget.selected_geo, geo_type)
-                
-        elif action == "add_group":
-            if has_multi_selection:
-                self._execute_multi_selection_action(self._add_group_to_group)
-            else:
-                self._add_group_to_group(obj)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -5104,6 +5440,7 @@ class XMLParser:
             geometries: 要导出的几何体列表或对象树
             include_metadata: 是否包含额外的元数据（创建时间、编辑历史等）
         """
+        used_names = set() 
         root = ET.Element("Scene")
         
         # 添加元数据部分
@@ -5126,8 +5463,15 @@ class XMLParser:
                 
             # 为几何体或组创建XML元素
             if hasattr(obj, "type") and obj.type == "group":
-                elem = ET.SubElement(parent_elem, "Group")
-                elem.set("name", obj.name)
+                group_name = obj.name
+                while group_name in used_names:
+                    base_name = group_name.split('_')[0]
+                    counter = len([n for n in used_names if n.startswith(base_name)])
+                    group_name = f"{base_name}_{counter + 1}"
+                used_names.add(group_name)
+
+                elem = ET.SubElement(parent_elem, "Group" ,name=group_name)
+                elem.set("name", group_name)
                 # 添加位置、旋转等属性
                 position = ET.SubElement(elem, "Position")
                 position.set("x", str(obj.position[0]))
@@ -5144,9 +5488,16 @@ class XMLParser:
                 for child in obj.children:
                     add_object_to_xml(children, child)
             else:
+                geo_name = obj.name
+                while geo_name in used_names:
+                    base_name = geo_name.split('_')[0]
+                    counter = len([n for n in used_names if n.startswith(base_name)])
+                    geo_name = f"{base_name}_{counter + 1}"
+                used_names.add(geo_name)
+
                 # 几何体对象
                 elem = ET.SubElement(parent_elem, "Geometry")
-                elem.set("name", obj.name)
+                elem.set("name", geo_name)
                 elem.set("type", obj.type)
                 
                 # 添加详细属性
