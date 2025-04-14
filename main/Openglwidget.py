@@ -1,4 +1,3 @@
-
 import sys
 import numpy as np
 from PyQt5.QtWidgets import *
@@ -21,13 +20,18 @@ from PyQt5.QtGui import QIcon
 
 from Geomentry import TransformMode, Material, GeometryType as OriginalGeometryType, Geometry, OperationMode
 from Geomentry import GeometryGroup
+from Geomentry import TriangleGeometry  # 使用正确的模块名
 
 class GeometryType(OriginalGeometryType):
     if not hasattr(OriginalGeometryType, 'ELLIPSOID'):
         ELLIPSOID = 'ellipsoid'
+    if not hasattr(OriginalGeometryType, 'TRIANGLE'):
+        TRIANGLE = 'triangle'
 
 if not hasattr(GeometryType, 'ELLIPSOID'):
     setattr(GeometryType, 'ELLIPSOID', 'ellipsoid')
+if not hasattr(GeometryType, 'TRIANGLE'):
+    setattr(GeometryType, 'TRIANGLE', 'triangle')
 
 # ========== 3D视图组件 ==========
 class OpenGLWidget(QOpenGLWidget):
@@ -108,6 +112,9 @@ class OpenGLWidget(QOpenGLWidget):
         
         # 拖放预览
         self.drag_preview = {'active': False}
+        
+        # 添加旋转控件相关的属性
+        self.rotation_axis = None  # 当前选中的旋转轴
 
     def initializeGL(self):
         try:
@@ -621,6 +628,8 @@ class OpenGLWidget(QOpenGLWidget):
     def mousePressEvent(self, event):
         """处理鼠标按下事件"""
         if event.button() == Qt.LeftButton:
+            # 确保正确初始化鼠标位置
+            self.last_mouse_pos = event.pos()
             self.drag_start_pos = event.pos()
             self.left_button_pressed = True
             
@@ -702,6 +711,18 @@ class OpenGLWidget(QOpenGLWidget):
             self.right_button_pressed = False
         
         # 释放鼠标后不执行任何额外操作
+        
+        # 在鼠标松开时重置 last_mouse 位置
+        self.last_mouse_pos = None
+        # 或者如果您使用的变量名是 last_mouse
+        # self.last_mouse = None
+        
+        # 重置其他可能需要清理的拖拽状态变量
+        self.dragging = False
+        if hasattr(self, 'drag_start_pos'):
+            self.drag_start_pos = None
+        
+        self.update()  # 确保视图更新
 
     def handle_view_pan(self, dx, dy):
         """视角平移 - 使用统一相机配置"""
@@ -910,63 +931,42 @@ class OpenGLWidget(QOpenGLWidget):
         glEnd()
 
     def draw_infinite_axes(self):
-        """增强版无限坐标轴（覆盖网格）"""
-        glPushAttrib(GL_ENABLE_BIT)
-        glDisable(GL_DEPTH_TEST)
-        glDisable(GL_LIGHTING)
+        """绘制无限延伸的世界坐标轴"""
+        # 保存当前属性
+        glPushAttrib(GL_ENABLE_BIT | GL_LINE_BIT)
         
-        # 绘制粗轴心线（覆盖网格）
-        glLineWidth(5)  # 加粗核心线段
-        axis_length = 1000
+        try:
+            # 禁用光照，以便坐标轴颜色更清晰
+            glDisable(GL_LIGHTING)
+            glDisable(GL_TEXTURE_2D)
+            
+            # 设置线宽
+            glLineWidth(2.0)
+            
+            # 绘制X轴（红色）
+            glBegin(GL_LINES)
+            glColor3f(1.0, 0.0, 0.0)  # 红色
+            glVertex3f(-1000.0, 0.0, 0.0)
+            glVertex3f(1000.0, 0.0, 0.0)
+            glEnd()
+            
+            # 绘制Y轴（绿色）
+            glBegin(GL_LINES)
+            glColor3f(0.0, 1.0, 0.0)  # 绿色
+            glVertex3f(0.0, -1000.0, 0.0)
+            glVertex3f(0.0, 1000.0, 0.0)
+            glEnd()
+            
+            # 绘制Z轴（蓝色）
+            glBegin(GL_LINES)
+            glColor3f(0.0, 0.0, 1.0)  # 蓝色
+            glVertex3f(0.0, 0.0, -1000.0)
+            glVertex3f(0.0, 0.0, 1000.0)
+            glEnd()
         
-        # X轴（红色核心）
-        glColor3f(1, 0.2, 0.2)
-        glBegin(GL_LINES)
-        glVertex3f(-axis_length, 0, 0)
-        glVertex3f(axis_length, 0, 0)
-        glEnd()
-        
-        # Y轴（绿色核心）
-        glColor3f(0.2, 1, 0.2)
-        glBegin(GL_LINES)
-        glVertex3f(0, -axis_length, 0)
-        glVertex3f(0, axis_length, 0)
-        glEnd()
-        
-        # Z轴（蓝色核心）
-        glColor3f(0.2, 0.2, 1)
-        glBegin(GL_LINES)
-        glVertex3f(0, 0, -axis_length)
-        glVertex3f(0, 0, axis_length)
-        glEnd()
-        
-        # 绘制半透明外延（增强深度感知）
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        glLineWidth(3)
-        
-        # X轴外延
-        glColor4f(1, 0, 0, 0.3)
-        glBegin(GL_LINES)
-        glVertex3f(-axis_length, 0, 0)
-        glVertex3f(axis_length, 0, 0)
-        glEnd()
-        
-        # Y轴外延
-        glColor4f(0, 1, 0, 0.3)
-        glBegin(GL_LINES)
-        glVertex3f(0, -axis_length, 0)
-        glVertex3f(0, axis_length, 0)
-        glEnd()
-        
-        # Z轴外延
-        glColor4f(0, 0, 1, 0.3)
-        glBegin(GL_LINES)
-        glVertex3f(0, 0, -axis_length)
-        glVertex3f(0, 0, axis_length)
-        glEnd()
-        
-        glPopAttrib()
+        finally:
+            # 确保无论如何都会恢复状态
+            glPopAttrib()
     
     def set_operation_mode(self, mode_id):
         """根据 UI 按钮切换操作模式"""
@@ -1451,17 +1451,19 @@ class OpenGLWidget(QOpenGLWidget):
         
         # 计算缩放因子（基于相机距离）
         scale_factor = 0.01 * camera_dist
+
+        print(dx)
         
         # 根据活动轴应用平移
         if self.active_axis == 'x':
             # 在X轴方向平移
-            self.selected_geo.position[0] += dx * scale_factor
+            self.selected_geo.position[0] -= dx * scale_factor
         elif self.active_axis == 'y':
             # 在Y轴方向平移
             self.selected_geo.position[1] += dx * scale_factor
         elif self.active_axis == 'z':
             # 在Z轴方向平移
-            self.selected_geo.position[2] += dx * scale_factor
+            self.selected_geo.position[2] -= dy * scale_factor
         
         # 如果是组，确保更新子对象的变换
         if self.selected_geo.type == "group":
@@ -1532,7 +1534,7 @@ class OpenGLWidget(QOpenGLWidget):
                 
                 # 计算有效拖动量：水平拖动(dx)更符合直觉
                 # 如果轴与视图接近垂直，使用垂直拖动(dy)
-                if abs(view_dot) < 0.3:
+                if axis_index == 2:
                     drag_amount = -dy * 0.01  # 垂直拖动，上移增大
                 else:
                     # 确定水平拖动方向（右移增大还是左移增大）
@@ -1580,9 +1582,6 @@ class OpenGLWidget(QOpenGLWidget):
     
     
 
-
-    
-    
 
 
     
@@ -2455,7 +2454,7 @@ class OpenGLWidget(QOpenGLWidget):
                 obj._update_transform()  # 更新自身的局部变换
 
     def _draw_rotation_gizmo(self, position):
-        """绘制不与物体重合的旋转控件"""
+        """绘制不与物体重合的旋转控件，使用三个首尾相连的圆柱体构成三角形"""
         if not self.selected_geo:
             return
             
@@ -2465,11 +2464,6 @@ class OpenGLWidget(QOpenGLWidget):
         
         # 确定控件的位置 - 距离物体一定距离
         camera_pos = self.camera_config['position']
-        camera_dir = self._camera_target - camera_pos
-        
-        # 计算相机到物体的方向
-        to_obj_dir = obj_pos - camera_pos
-        to_obj_dist = np.linalg.norm(to_obj_dir)
         
         # 更新相机向量
         self.update_camera_vectors()
@@ -2482,185 +2476,161 @@ class OpenGLWidget(QOpenGLWidget):
             gizmo_pos = obj_pos + np.array([0, 0, offset_distance])
         
         # 控件参数
-        axis_length = max(2.5, obj_size * 0.8)
-        axis_thickness = axis_length * 0.05
+        axis_length = max(1.5, obj_size * 0.6)  # 三角形边长
+        axis_thickness = axis_length * 0.05    # 圆柱体半径
         
-        # 保存当前状态
-        current_color = glGetFloatv(GL_CURRENT_COLOR)
+        # 存储几何信息用于检测
+        self.rotation_gizmo_geometries = []
         
-        try:
-            glDisable(GL_DEPTH_TEST)
-            glDisable(GL_LIGHTING)
-            
-            # 绘制原点球
-            glPushMatrix()
-            glTranslatef(*gizmo_pos)
-            
-            glColor3f(0.8, 0.8, 0.8)
-            glutSolidSphere(axis_thickness * 1.5, 12, 12)
-            
-            # 存储几何信息用于检测
-            self.rotation_gizmo_geometries = []
-            
-            # X轴旋转控件（红色）
-            glColor3f(1.0, 0.0, 0.0)
-            self._draw_axis_cylinder(
-                0, -axis_length/2, 0,  # 起点
-                0, axis_length/2, 0,   # 终点
-                axis_thickness
-            )
-            x_axis_geo = Geometry(
-                geo_type=GeometryType.CYLINDER,
-                name="rotation_x_axis",
-                position=gizmo_pos,
-                size=[axis_thickness, axis_length/2, 0],
-                rotation=[0, 0, 0]
-            )
-            x_axis_geo.material.color = [1.0, 0.0, 0.0, 1.0]
-            self.rotation_gizmo_geometries.append(('x', x_axis_geo))
-            
-            # Y轴旋转控件（绿色）
-            glColor3f(0.0, 1.0, 0.0)
-            self._draw_axis_cylinder(
-                -axis_length/2, 0, 0,  # 起点
-                axis_length/2, 0, 0,   # 终点
-                axis_thickness
-            )
-            y_axis_geo = Geometry(
-                geo_type=GeometryType.CYLINDER,
-                name="rotation_y_axis",
-                position=gizmo_pos,
-                size=[axis_thickness, axis_length/2, 0],
-                rotation=[0, 90, 0]
-            )
-            y_axis_geo.material.color = [0.0, 1.0, 0.0, 1.0]
-            self.rotation_gizmo_geometries.append(('y', y_axis_geo))
-            
-            # Z轴旋转控件（蓝色）
-            glColor3f(0.0, 0.0, 1.0)
-            self._draw_axis_cylinder(
-                0, 0, -axis_length/2,  # 起点
-                0, 0, axis_length/2,   # 终点
-                axis_thickness
-            )
-            z_axis_geo = Geometry(
-                geo_type=GeometryType.CYLINDER,
-                name="rotation_z_axis",
-                position=gizmo_pos,
-                size=[axis_thickness, axis_length/2, 0],
-                rotation=[90, 0, 0]
-            )
-            z_axis_geo.material.color = [0.0, 0.0, 1.0, 1.0]
-            self.rotation_gizmo_geometries.append(('z', z_axis_geo))
-            
-            # 如果有活动轴，绘制高亮
-            if hasattr(self, 'active_axis'):
-                glColor3f(1, 1, 0)  # 黄色高亮
-                if self.active_axis == 'x':
-                    self._draw_axis_cylinder(
-                        0, -axis_length/2, 0,
-                        0, axis_length/2, 0,
-                        axis_thickness * 1.2
-                    )
-                elif self.active_axis == 'y':
-                    self._draw_axis_cylinder(
-                        -axis_length/2, 0, 0,
-                        axis_length/2, 0, 0,
-                        axis_thickness * 1.2
-                    )
-                elif self.active_axis == 'z':
-                    self._draw_axis_cylinder(
-                        0, 0, -axis_length/2,
-                        0, 0, axis_length/2,
-                        axis_thickness * 1.2
-                    )
-                
-        finally:
-            # 恢复状态
-            glPopMatrix()
-            glEnable(GL_LIGHTING)
-            glEnable(GL_DEPTH_TEST)
-            glColor4fv(current_color)
-            
+        # 定义三角形的三个顶点
+        p1 = np.array([axis_length, 0, 0])     # X轴方向点
+        p2 = np.array([0, axis_length, 0])     # Y轴方向点
+        p3 = np.array([0, 0, axis_length])     # Z轴方向点
+        
+        # 绘制坐标系原点（小球）
+        glPushMatrix()
+        glTranslatef(*gizmo_pos)
+        
+        # 禁用深度测试和光照以便更清晰地显示控件
+        glDisable(GL_DEPTH_TEST)
+        glDisable(GL_LIGHTING)
+        
+        # 原点球
+        glColor3f(0.8, 0.8, 0.8)
+        glutSolidSphere(axis_thickness * 1.5, 12, 12)
+        
+        # X轴旋转控件 - 红色 (从p2到p3)
+        glColor4f(1.0, 0.0, 0.0, 0.8)  # 红色
+        if hasattr(self, 'rotation_axis') and self.rotation_axis == 'x':
+            glColor4f(1.0, 1.0, 0.0, 0.8)  # 高亮为黄色
+        
+        self._draw_cylinder(p2[0], p2[1], p2[2], p3[0], p3[1], p3[2], axis_thickness)
+        
+        # 保存X轴几何信息
+        x_cylinder = Geometry(geo_type=GeometryType.CYLINDER)  # 修复：提供geo_type参数
+        x_cylinder.name = "rotation_x_axis"
+        x_cylinder.position = (p2 + p3) / 2
+        x_cylinder.size = np.array([axis_thickness, np.linalg.norm(p3 - p2) / 2, axis_thickness])
+        x_cylinder.material.color = [1.0, 0.0, 0.0, 0.8]
+        self.rotation_gizmo_geometries.append(('x', x_cylinder))
+        
+        # Y轴旋转控件 - 绿色 (从p3到p1)
+        glColor4f(0.0, 1.0, 0.0, 0.8)  # 绿色
+        if hasattr(self, 'rotation_axis') and self.rotation_axis == 'y':
+            glColor4f(1.0, 1.0, 0.0, 0.8)  # 高亮为黄色
+        
+        self._draw_cylinder(p3[0], p3[1], p3[2], p1[0], p1[1], p1[2], axis_thickness)
+        
+        # 保存Y轴几何信息
+        y_cylinder = Geometry(geo_type=GeometryType.CYLINDER)  # 修复：提供geo_type参数
+        y_cylinder.name = "rotation_y_axis"
+        y_cylinder.position = (p3 + p1) / 2
+        y_cylinder.size = np.array([axis_thickness, np.linalg.norm(p1 - p3) / 2, axis_thickness])
+        y_cylinder.material.color = [0.0, 1.0, 0.0, 0.8]
+        self.rotation_gizmo_geometries.append(('y', y_cylinder))
+        
+        # Z轴旋转控件 - 蓝色 (从p1到p2)
+        glColor4f(0.0, 0.0, 1.0, 0.8)  # 蓝色
+        if hasattr(self, 'rotation_axis') and self.rotation_axis == 'z':
+            glColor4f(1.0, 1.0, 0.0, 0.8)  # 高亮为黄色
+        
+        self._draw_cylinder(p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], axis_thickness)
+        
+        # 保存Z轴几何信息
+        z_cylinder = Geometry(geo_type=GeometryType.CYLINDER)  # 修复：提供geo_type参数
+        z_cylinder.name = "rotation_z_axis"
+        z_cylinder.position = (p1 + p2) / 2
+        z_cylinder.size = np.array([axis_thickness, np.linalg.norm(p2 - p1) / 2, axis_thickness])
+        z_cylinder.material.color = [0.0, 0.0, 1.0, 0.8]
+        self.rotation_gizmo_geometries.append(('z', z_cylinder))
+        
+        # 恢复OpenGL状态
+        glEnable(GL_LIGHTING)
+        glEnable(GL_DEPTH_TEST)
+        glPopMatrix()
+        
         # 存储控件位置信息供检测使用
         self.rotation_gizmo_pos = gizmo_pos
 
+    def _draw_cylinder(self, x1, y1, z1, x2, y2, z2, radius, slices=8):
+        """
+        绘制一个圆柱体，从点(x1,y1,z1)到点(x2,y2,z2)
+        """
+        direction = np.array([x2-x1, y2-y1, z2-z1])
+        length = np.linalg.norm(direction)
+        
+        if length < 1e-6:
+            return  # 避免长度为零的情况
+        
+        # 标准化方向向量
+        direction = direction / length
+        
+        # 计算两个互相垂直且都垂直于direction的向量
+        v = np.array([0.0, 1.0, 0.0])  # 辅助向量
+        if abs(np.dot(v, direction)) > 0.9:
+            v = np.array([1.0, 0.0, 0.0])
+        
+        # 第一个垂直向量
+        u1 = np.cross(v, direction)
+        u1 = u1 / np.linalg.norm(u1)
+        
+        # 第二个垂直向量
+        u2 = np.cross(direction, u1)
+        
+        # 绘制圆柱体的侧面
+        glBegin(GL_QUAD_STRIP)
+        for i in range(slices+1):
+            angle = 2.0 * np.pi * i / slices
+            c = np.cos(angle)
+            s = np.sin(angle)
+            
+            # 圆柱体底部顶点
+            normal = c * u1 + s * u2
+            glNormal3f(*normal)
+            glVertex3f(x1 + radius * normal[0], y1 + radius * normal[1], z1 + radius * normal[2])
+            
+            # 圆柱体顶部顶点
+            glVertex3f(x2 + radius * normal[0], y2 + radius * normal[1], z2 + radius * normal[2])
+        glEnd()
+
     def _detect_rotation_axis(self, mouse_pos, position):
-        """检测旋转轴的点击"""
-        ray_origin, ray_direction = self._get_mouse_ray(mouse_pos)
-        
-        # 控件参数
-        axis_length = 1.2
-        axis_radius = 0.03
-        
-        # 定义三个旋转轴的圆柱体
-        cylinders = [
-            # X轴旋转控件（垂直于X轴）
-            {
-                'start': position + np.array([0, -axis_length/2, 0]),
-                'end': position + np.array([0, axis_length/2, 0]),
-                'axis': 'x'
-            },
-            # Y轴旋转控件
-            {
-                'start': position + np.array([-axis_length/2, 0, 0]),
-                'end': position + np.array([axis_length/2, 0, 0]),
-                'axis': 'y'
-            },
-            # Z轴旋转控件（需要考虑90度旋转）
-            {
-                'start': position + np.array([0, 0, -axis_length/2]),
-                'end': position + np.array([0, 0, axis_length/2]),
-                'axis': 'z'
-            }
-        ]
-        
-        # 检测与每个圆柱体的相交
-        min_distance = float('inf')
-        selected_axis = None
-        
-        for cylinder in cylinders:
-            result = self._ray_cylinder_intersection(
-                ray_origin, 
-                ray_direction,
-                cylinder['start'],
-                cylinder['end'],
-                axis_radius
+        """使用Raycaster检测旋转控件的点击"""
+        if not hasattr(self, 'rotation_gizmo_geometries') or not self.rotation_gizmo_geometries:
+            return None
+    
+        try:
+            # 创建临时射线投射器
+            temp_raycaster = GeometryRaycaster(
+                camera_config=self.camera_config,
+                geometries=[geo for _, geo in self.rotation_gizmo_geometries]
             )
             
-            if result is not None:
-                distance = result[3] if isinstance(result, np.ndarray) else result
-                
-                if distance > 0 and distance < min_distance:
-                    min_distance = distance
-                    selected_axis = cylinder['axis']
-    
-        return selected_axis
-
-    def _handle_rotate_drag(self, dx, dy):
-        """处理旋转拖动"""
-        if not hasattr(self, 'active_axis') or not self.selected_geo:
-            return
+            # 为几何体添加绝对位置信息，因为它们当前是相对于gizmo_pos的
+            for axis_name, geo in self.rotation_gizmo_geometries:
+                # 暂时更新位置到世界坐标
+                original_pos = geo.position.copy()
+                geo.position = self.rotation_gizmo_pos + geo.position
             
-        # 根据活动轴确定旋转方向
-        rotation_amount = dx * 0.5  # 可以调整这个系数来控制旋转速度
+            # 投射射线检测碰撞
+            result = temp_raycaster.cast_ray((mouse_pos.x(), mouse_pos.y()))
+            
+            # 恢复原始位置
+            for axis_name, geo in self.rotation_gizmo_geometries:
+                geo.position = geo.position - self.rotation_gizmo_pos
+            
+            if result and result.geometry:
+                # 找到对应的轴名称
+                for axis_name, geo in self.rotation_gizmo_geometries:
+                    if result.geometry == geo:
+                        return axis_name
+            
+            return None
         
-        if self.active_axis == 'x':
-            self.selected_geo.rotation[0] += rotation_amount
-        elif self.active_axis == 'y':
-            self.selected_geo.rotation[1] += rotation_amount
-        elif self.active_axis == 'z':
-            self.selected_geo.rotation[2] += rotation_amount
-        
-        # 更新变换
-        if hasattr(self.selected_geo, '_update_transform'):
-            self.selected_geo._update_transform()
-        
-        # 如果是组，更新所有子对象
-        if self.selected_geo.type == "group":
-            self.update_group_transforms_recursive(self.selected_geo)
-        
-        self.update()
+        except Exception as e:
+            print(f"检测旋转控件出错: {str(e)}")
+            return None
+
+
 
     def _draw_circle(self, radius, segments, line_width=10.0):
         """绘制一个圆形
@@ -2690,7 +2660,10 @@ class OpenGLWidget(QOpenGLWidget):
                 return self.detect_floating_axis(mouse_pos)
             elif self.current_mode == OperationMode.MODE_ROTATE:
                 # 旋转模式使用旋转轴检测
-                return self._detect_rotation_axis(mouse_pos, self.selected_geo.position)
+                axis = self._detect_rotation_axis(mouse_pos, self.selected_geo.position)
+                if axis:
+                    self.set_rotation_axis(axis)  # 设置当前旋转轴
+                return axis
                 
             return -1
         except Exception as e:
@@ -2914,3 +2887,12 @@ class OpenGLWidget(QOpenGLWidget):
         # 其他操作：逐个执行
         for obj in self.gl_widget.selected_geos:
             action_func(obj, *args)
+
+    def set_rotation_axis(self, axis_name):
+        """设置当前活动的旋转轴
+        
+        Args:
+            axis_name: 轴名称 ('x', 'y', 'z' 或 None)
+        """
+        self.rotation_axis = axis_name
+        self.update()  # 触发重绘，更新高亮显示

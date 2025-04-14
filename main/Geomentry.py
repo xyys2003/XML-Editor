@@ -67,7 +67,7 @@ class OperationMode:
 
 
 class GeometryType:
-    BOX, SPHERE, CYLINDER, CAPSULE, PLANE, ELLIPSOID = 'box sphere cylinder capsule plane ellipsoid'.split()
+    BOX, SPHERE, CYLINDER, CAPSULE, PLANE, ELLIPSOID, TRIANGLE = 'box sphere cylinder capsule plane ellipsoid triangle'.split()
 
 class Geometry(QObject):
     changed = pyqtSignal()
@@ -291,3 +291,12 @@ class GeometryGroup(QObject):
         """获取世界坐标系中的位置"""
         world_matrix = self.get_world_transform()
         return world_matrix[:3, 3]
+
+class TriangleGeometry(Geometry):
+    """三角形几何体类"""
+    
+    def __init__(self):
+        super().__init__()
+        self.type = GeometryType.TRIANGLE if hasattr(GeometryType, 'TRIANGLE') else 'triangle'
+        self.vertices = []  # 三角形的三个顶点
+        self.color = [1.0, 1.0, 1.0, 1.0]  # 默认白色
