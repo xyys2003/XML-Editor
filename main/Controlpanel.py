@@ -1,4 +1,3 @@
-
 # ========== 界面组件 ==========
 
 import sys
@@ -118,9 +117,11 @@ class ControlPanel(QDockWidget):
         view_group = QGroupBox("视图设置")
         view_layout = QVBoxLayout()
         
-        ortho_check = QCheckBox("正交投影")
-        ortho_check.toggled.connect(self.toggle_ortho)
-        view_layout.addWidget(ortho_check)
+        # 只保留网格显示复选框
+        self.grid_check = QCheckBox("显示网格")
+        self.grid_check.setChecked(True)  # 默认选中
+        self.grid_check.toggled.connect(self.toggle_grid)
+        view_layout.addWidget(self.grid_check)
         
         view_group.setLayout(view_layout)
         layout.addWidget(view_group)
@@ -192,11 +193,6 @@ class ControlPanel(QDockWidget):
         if self.sender().isChecked():  # 只在按钮被选中时处理
             self.gl_widget.set_operation_mode(mode_id)
     
-    def toggle_ortho(self, checked):
-        """切换正交/透视投影"""
-        self.gl_widget.use_orthographic = checked
-        self.gl_widget.update_camera_config()
-
     def update_mode_buttons(self, mode_id):
         """根据当前模式更新按钮状态"""
         # 阻断信号以避免循环触发
@@ -207,6 +203,11 @@ class ControlPanel(QDockWidget):
             self.translate_btn.setChecked(mode_id == OperationMode.MODE_TRANSLATE)
             self.rotate_btn.setChecked(mode_id == OperationMode.MODE_ROTATE)
             self.scale_btn.setChecked(mode_id == OperationMode.MODE_SCALE)
+
+    def toggle_grid(self, checked):
+        """切换网格显示"""
+        self.gl_widget.show_grid = checked
+        self.gl_widget.update()
 
 class DraggableGeometryButton(QPushButton):
     """可拖拽的几何体创建按钮"""

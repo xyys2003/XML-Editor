@@ -1,5 +1,3 @@
-
-
 import sys
 import numpy as np
 from PyQt5.QtWidgets import *
@@ -144,12 +142,64 @@ class PropertyPanel(QDockWidget):
             
             # 如果是几何体，添加材质属性
             if hasattr(geo, 'material'):
-                # 颜色选择按钮
-                self.color_button = QPushButton()
+                # 创建颜色选择区域
+                color_widget = QWidget()
+                color_layout = QHBoxLayout()
+                color_widget.setLayout(color_layout)
+                
+                # 添加颜色显示区域
+                self.color_preview = QFrame()
+                self.color_preview.setFixedSize(30, 30)
+                self.color_preview.setFrameShape(QFrame.Box)
+                self.color_preview.setFrameShadow(QFrame.Plain)
+                
+                # 设置当前颜色
                 color = geo.material.color
-                self.color_button.setStyleSheet(
-                    f"background-color: rgb({int(color[0]*255)}, {int(color[1]*255)}, {int(color[2]*255)})")
-                self.form_layout.addRow("颜色:", self.color_button)
+                self.color_preview.setStyleSheet(
+                    f"background-color: rgb({int(color[0]*255)}, {int(color[1]*255)}, {int(color[2]*255)}); border: 1px solid #888;")
+                
+                # 添加颜色选择按钮
+                self.color_button = QPushButton("选择颜色")
+                self.color_button.setFixedHeight(30)
+                
+                # 添加到布局
+                color_layout.addWidget(self.color_preview)
+                color_layout.addWidget(self.color_button)
+                
+                self.form_layout.addRow("颜色:", color_widget)
+                
+                # 添加颜色预设面板
+                preset_widget = QWidget()
+                preset_layout = QHBoxLayout()
+                preset_layout.setSpacing(2)
+                preset_widget.setLayout(preset_layout)
+                
+                # 定义预设颜色
+                presets = [
+                    ((1.0, 0.0, 0.0), "红色"),
+                    ((0.0, 1.0, 0.0), "绿色"),
+                    ((0.0, 0.0, 1.0), "蓝色"),
+                    ((1.0, 1.0, 0.0), "黄色"),
+                    ((1.0, 0.0, 1.0), "紫色"),
+                    ((0.0, 1.0, 1.0), "青色"),
+                    ((0.5, 0.5, 0.5), "灰色"),
+                    ((1.0, 1.0, 1.0), "白色")
+                ]
+                
+                # 创建颜色按钮
+                for preset_color, tooltip in presets:
+                    btn = QPushButton()
+                    btn.setFixedSize(20, 20)
+                    btn.setToolTip(tooltip)
+                    btn.setStyleSheet(
+                        f"background-color: rgb({int(preset_color[0]*255)}, "
+                        f"{int(preset_color[1]*255)}, {int(preset_color[2]*255)}); "
+                        f"border: 1px solid #888;")
+                    # 使用闭包保存颜色值
+                    btn.clicked.connect(lambda checked, c=preset_color: self._apply_preset_color(c))
+                    preset_layout.addWidget(btn)
+                
+                self.form_layout.addRow("预设:", preset_widget)
             
             # 连接信号
             self._connect_signals()
@@ -255,15 +305,15 @@ class PropertyPanel(QDockWidget):
             # 颜色按钮
             if hasattr(self, 'color_button') and self.color_button is not None:
                 try:
-                    # 检查按钮是否有效
-                    if not sip.isdeleted(self.color_button):
-                        try:
-                            self.color_button.clicked.disconnect()
-                        except:
-                            pass
-                        self.color_button.clicked.connect(self._pick_color)
+                    self.color_button.clicked.disconnect()
                 except:
                     pass
+                self.color_button.clicked.connect(self._pick_color)
+            
+            # 颜色预览区域点击也可以打开颜色选择器
+            if hasattr(self, 'color_preview') and self.color_preview is not None:
+                self.color_preview.mousePressEvent = lambda event: self._pick_color()
+                self.color_preview.setCursor(Qt.PointingHandCursor)
                 
         except Exception as e:
             print(f"连接信号时出错: {str(e)}")
@@ -387,24 +437,62 @@ class PropertyPanel(QDockWidget):
             yield
 
     def _pick_color(self):
+        """打开颜色选择器修改当前物体颜色"""
         if not hasattr(self, 'current_geo') or self.current_geo is None:
             return
         
         if not hasattr(self.current_geo, 'material'):
             return
         
-        color = QColorDialog.getColor()
+        # 获取当前颜色
+        current_color = self.current_geo.material.color
+        
+        # 创建QColor对象
+        initial_color = QColor(
+            int(current_color[0] * 255),
+            int(current_color[1] * 255),
+            int(current_color[2] * 255)
+        )
+        
+        # 打开颜色选择器
+        color = QColorDialog.getColor(initial=initial_color)
         if not color.isValid():
             return
         
-        # 更新按钮样式
-        if hasattr(self, 'color_button') and self.color_button is not None:
-            self.color_button.setStyleSheet(f"background-color: {color.name()}")
+        # 应用新颜色
+        self._apply_color(color)
+
+    def _apply_color(self, qcolor):
+        """应用QColor到当前物体"""
+        if not self.current_geo or not hasattr(self.current_geo, 'material'):
+            return
         
-        # 转换颜色值
-        rgba = [color.redF(), color.greenF(), color.blueF(), color.alphaF()]
+        # 更新预览颜色
+        if hasattr(self, 'color_preview') and self.color_preview is not None:
+            self.color_preview.setStyleSheet(
+                f"background-color: {qcolor.name()}; border: 1px solid #888;")
+        
+        # 转换颜色值并应用到物体
+        rgba = [qcolor.redF(), qcolor.greenF(), qcolor.blueF(), 1.0]
         self.current_geo.material.color = rgba
+        
+        # 更新3D视图
         self.gl_widget.update()
+
+    def _apply_preset_color(self, color_rgb):
+        """应用预设颜色"""
+        if not self.current_geo or not hasattr(self.current_geo, 'material'):
+            return
+        
+        # 创建QColor对象
+        qcolor = QColor(
+            int(color_rgb[0] * 255),
+            int(color_rgb[1] * 255),
+            int(color_rgb[2] * 255)
+        )
+        
+        # 应用颜色
+        self._apply_color(qcolor)
 
     def clear_layout(self, layout):
         """清除布局中的所有小部件"""

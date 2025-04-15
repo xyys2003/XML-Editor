@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from Geomentry import TransformMode, Material, GeometryType as OriginalGeometryType, Geometry, OperationMode
 from Geomentry import GeometryGroup
 
-from Openglwidget import OpenGLWidget
+from OpenGLWidget import OpenGLWidget
 from Controlpanel import ControlPanel
 from PropertyPanel import PropertyPanel
 from HierarchyTree import HierarchyTree

@@ -77,7 +77,7 @@ class OpenGLWidget(QOpenGLWidget):
         
         self.dragging = False
         self.active_axis = None
-        self.last_mouse_pos = QPoint()
+        self.last_mouse_pos = QPoint(0, 0)  # 使用默认位置初始化，而不是None
         # 新增相机方向向量
         self.camera_front = np.array([0.0, 0.0, -1.0])  # 初始前向
         self.camera_right = np.array([1.0, 0.0, 0.0])    # 初始右向
@@ -115,6 +115,10 @@ class OpenGLWidget(QOpenGLWidget):
         
         # 添加旋转控件相关的属性
         self.rotation_axis = None  # 当前选中的旋转轴
+        
+        # 添加网格显示控制变量
+        self.show_grid = True
+        self.grid_color = (1.0, 1.0, 1.0, 1.0)  # 默认白色网格颜色
 
     def initializeGL(self):
         try:
@@ -627,9 +631,11 @@ class OpenGLWidget(QOpenGLWidget):
 
     def mousePressEvent(self, event):
         """处理鼠标按下事件"""
+        # 记录初始鼠标位置
+        self.last_mouse_pos = event.pos()
+        
         if event.button() == Qt.LeftButton:
             # 确保正确初始化鼠标位置
-            self.last_mouse_pos = event.pos()
             self.drag_start_pos = event.pos()
             self.left_button_pressed = True
             
@@ -677,11 +683,13 @@ class OpenGLWidget(QOpenGLWidget):
             self.right_button_pressed = True
 
     def mouseMoveEvent(self, event):
-        """处理鼠标移动事件，包括悬浮坐标系拖拽"""
-        # 只有当鼠标按键按下时才进行操作
-        if not (self.left_button_pressed or self.right_button_pressed):
+        """处理鼠标移动事件"""
+        # 检查last_mouse_pos是否已初始化
+        if self.last_mouse_pos is None:
+            self.last_mouse_pos = event.pos()
             return
-            
+        
+        # 计算鼠标移动的距离
         dx = event.x() - self.last_mouse_pos.x()
         dy = event.y() - self.last_mouse_pos.y()
         
@@ -725,26 +733,45 @@ class OpenGLWidget(QOpenGLWidget):
         self.update()  # 确保视图更新
 
     def handle_view_pan(self, dx, dy):
-        """视角平移 - 使用统一相机配置"""
-        # 获取所需的相机参数
+        """视角平移 - 在任意相机角度正确工作
+        
+        优化版本：
+        1. 正确处理任意相机视角
+        2. 平移限制在屏幕平面内
+        3. 动态调整平移速度
+        """
+        # 更新相机向量，确保在计算前有最新的向量
+        self.update_camera_vectors()
+        
+        # 获取相机位置和目标点
         camera_position = self.camera_config['position']
-        view_matrix = self.camera_config['view']
         
-        # 获取相机坐标系的右向量和上向量（从view矩阵提取）
-        right = view_matrix[:3, 0]  # 第一列是右向量
-        up = view_matrix[:3, 1]     # 第二列是上向量
+        # 计算平移缩放因子 - 基于当前视角距离
+        distance = np.linalg.norm(camera_position - self._camera_target)
+        base_factor = 0.003  # 降低基础系数以获得更精细的控制
+        scale_factor = base_factor * distance
         
-        # 计算平移缩放因子
-        scale_factor = 0.005 * np.linalg.norm(camera_position - self._camera_target)
+        # 如果移动距离太小，则不处理
+        if abs(dx) < 0.5 and abs(dy) < 0.5:
+            return
         
-        # 计算平移向量
-        pan_vector = right * (-dx * scale_factor) + up * (dy * scale_factor)
+        # 使用相机的right和up向量 - 这些向量定义了与视线垂直的平面
+        # 无论相机如何旋转，这些向量总是与屏幕平面对齐
+        right_offset = self.camera_right * (-dx * scale_factor)
+        up_offset = self.camera_up * (dy * scale_factor)
         
-        # 更新相机目标点
+        # 合并为一个平移向量
+        pan_vector = right_offset + up_offset
+        
+        # 同时移动相机位置和目标点，保持视线方向不变
         self._camera_target += pan_vector
+        self.camera_config['position'] += pan_vector
         
         # 更新相机配置
         self.update_camera_config()
+        
+        # 确保视图更新
+        self.update()
 
     def wheelEvent(self, event):
         """优化的鼠标滚轮事件 - 缩放视角"""
@@ -884,6 +911,10 @@ class OpenGLWidget(QOpenGLWidget):
 
     def draw_infinite_grid(self):
         """绘制无限网格"""
+        # 如果不显示网格，则直接返回
+        if not self.show_grid:
+            return
+        
         # 保存当前颜色
         current_color = glGetFloatv(GL_CURRENT_COLOR)
         
@@ -898,16 +929,33 @@ class OpenGLWidget(QOpenGLWidget):
         main_interval = 1.0
         main_extent = 50.0
         
-        # 主网格线（较暗）
-        glColor4f(0.5, 0.5, 0.5, 0.3)
+        # 禁用光照以防止材质影响网格颜色
+        glDisable(GL_LIGHTING)
+        
+        # 主网格线 - 使用设置的网格颜色
+        glColor4f(
+            self.grid_color[0], 
+            self.grid_color[1], 
+            self.grid_color[2], 
+            0.3 # 保持透明度为固定值，以确保网格不会过于明显
+        )
         self._draw_grid_lines(center_x, center_z, main_interval, main_extent)
         
-        # 次网格线（更暗）
-        glColor4f(0.3, 0.3, 0.3, 0.15)
+        # 次网格线 - 使用更暗的网格颜色
+        darker_color = (
+            self.grid_color[0] ,  # 使颜色更暗
+            self.grid_color[1] ,
+            self.grid_color[2] ,
+            0.15  # 更低的透明度
+        )
+        glColor4f(*darker_color)
         self._draw_grid_lines(center_x, center_z, main_interval/5, main_extent)
         
-        # 恢复原始颜色
+        # 恢复原始颜色和状态
         glColor4fv(current_color)
+        
+        # 如果原先启用了光照，重新启用
+        glEnable(GL_LIGHTING)
 
     def _draw_grid_lines(self, center_x, center_z, interval, extent):
         """动态生成网格线并跳过坐标轴区域"""
