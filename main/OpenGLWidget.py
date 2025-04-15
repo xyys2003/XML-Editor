@@ -715,6 +715,8 @@ class OpenGLWidget(QOpenGLWidget):
             self.dragging = False
             self.active_axis = None
             self._dragging_floating_gizmo = False
+            self.smooth_focus_on_object(self.selected_geo)
+            
         elif event.button() == Qt.RightButton:
             self.right_button_pressed = False
         
@@ -838,6 +840,8 @@ class OpenGLWidget(QOpenGLWidget):
             # 没有按Ctrl，清除之前的选择，进行单选
             self.selected_geos.clear()
             self.selected_geo = geo
+            self.smooth_focus_on_object(geo)
+
             if geo:
                 self.selected_geos.append(geo)
         else:
@@ -854,6 +858,7 @@ class OpenGLWidget(QOpenGLWidget):
                     # 添加新的选中对象
                     self.selected_geos.append(geo)
                     self.selected_geo = geo  # 最后选中的对象用于变换操作
+                    self.smooth_focus_on_object(geo)
         
         # 发送选择改变信号
         self.selection_changed.emit(self.selected_geo)
@@ -2773,25 +2778,38 @@ class OpenGLWidget(QOpenGLWidget):
                 sign = -1 if view_dot < 0 else 1
                 drag_amount = dx * scale_speed * sign
             
-            # 获取当前尺寸
-            current_size = list(self.selected_geo.size)
-            
-            # 根据轴更新相应维度的尺寸
+            # 获取轴的索引
             axis_index = {'x': 0, 'y': 1, 'z': 2}[axis_name]
-            current_size[axis_index] += drag_amount
             
-            # 确保尺寸不会太小
-            current_size[axis_index] = max(0.1, current_size[axis_index])
-            
-            # 应用新的尺寸
-            self.selected_geo.size = current_size
-            
-            # 如果是组，更新子对象的变换
-            if self.selected_geo.type == "group":
+            # 检查是否是组对象
+            if hasattr(self.selected_geo, 'type') and self.selected_geo.type == "group":
+                # 计算缩放因子
+                scale_factor = 1.0 + drag_amount
+                
+                # 创建缩放方向向量 (哪个方向需要缩放)
+                scale_direction = [0, 0, 0]
+                scale_direction[axis_index] = 1
+                
+                # 调用组的递归缩放函数
+                self._scale_group_recursive(self.selected_geo, self.selected_geo.position, scale_factor, scale_direction)
+                
+                # 更新组的变换
                 if hasattr(self.selected_geo, '_update_transform'):
                     self.selected_geo._update_transform()
                 if hasattr(self.selected_geo, '_update_children_transforms'):
                     self.selected_geo._update_children_transforms()
+            else:
+                # 普通物体的缩放处理
+                current_size = list(self.selected_geo.size)
+                
+                # 根据轴更新相应维度的尺寸
+                current_size[axis_index] += drag_amount
+                
+                # 确保尺寸不会太小
+                current_size[axis_index] = max(0.1, current_size[axis_index])
+                
+                # 应用新的尺寸
+                self.selected_geo.size = current_size
                 
         except Exception as e:
             print(f"缩放拖拽出错: {str(e)}")
@@ -2944,3 +2962,104 @@ class OpenGLWidget(QOpenGLWidget):
         """
         self.rotation_axis = axis_name
         self.update()  # 触发重绘，更新高亮显示
+
+    # 添加新的平滑过渡方法
+    def smooth_focus_on_object(self, geo):
+        """平滑地将相机焦点移动到物体位置"""
+        if not geo:
+            return
+            
+        # 获取物体的位置作为目标点
+        target_position = geo.position.copy()
+        
+        # 如果没有动画定时器，创建一个
+        if not hasattr(self, 'animation_timer'):
+            from PyQt5.QtCore import QTimer
+            self.animation_timer = QTimer()
+            self.animation_timer.timeout.connect(self._animation_step)
+        
+        # 停止当前可能正在运行的动画
+        if self.animation_timer.isActive():
+            self.animation_timer.stop()
+        
+        # 保存动画初始状态和参数
+        import time
+        self.animation_start_time = time.time()
+        self.animation_duration = 0.3  # 动画持续时间，秒
+        self.animation_start_target = self._camera_target.copy()
+        self.animation_end_target = target_position.copy()
+        
+        # 启动动画
+        self.animation_timer.start(16)  # 约60fps
+
+    def _animation_step(self):
+        """动画步骤回调函数"""
+        import time
+        current_time = time.time()
+        elapsed = current_time - self.animation_start_time
+        
+        if elapsed >= self.animation_duration:
+            # 动画结束
+            self._camera_target = self.animation_end_target.copy()
+            self.animation_timer.stop()
+        else:
+            # 计算动画进度
+            t = elapsed / self.animation_duration
+            # 使用缓入缓出函数
+            t = self._ease_in_out_quad(t)
+            
+            # 插值计算当前相机目标位置
+            self._camera_target = (
+                self.animation_start_target * (1 - t) + 
+                self.animation_end_target * t
+            )
+        
+        # 更新相机配置和视图
+        self.update_camera_config()
+        self.update()
+
+    def _ease_in_out_quad(self, t):
+        """缓入缓出的二次方缓动函数"""
+        if t < 0.5:
+            return 2 * t * t
+        else:
+            return -1 + (4 - 2 * t) * t
+
+    # 请确保添加以下递归缩放函数到OpenGLWidget类中
+    def _scale_group_recursive(self, group, center, scale_factor, scale_direction):
+        """递归缩放组及其内部所有物体
+        
+        Args:
+            group: 要缩放的组
+            center: 缩放的参考中心点
+            scale_factor: 缩放因子
+            scale_direction: 缩放方向 [x_scale, y_scale, z_scale]，值为1表示该方向缩放
+        """
+        # 遍历组内所有子物体
+        for child in group.children:
+            # 计算子物体相对于组中心的偏移向量
+            offset = child.position - center
+            
+            # 对偏移向量应用缩放
+            new_position = center.copy()  # 从中心点开始
+            for i in range(3):
+                if scale_direction[i]:  # 如果该方向需要缩放
+                    # 在该方向上应用缩放因子
+                    new_position[i] += offset[i] * scale_factor
+                else:
+                    # 不缩放的方向保持原样
+                    new_position[i] += offset[i]
+            
+            # 更新子物体位置
+            child.position = new_position
+            
+            # 根据子物体类型处理
+            if hasattr(child, 'type') and child.type == "group":
+                # 如果子物体是组，递归处理
+                self._scale_group_recursive(child, child.position, scale_factor, scale_direction)
+            else:
+                # 如果是普通物体，缩放其尺寸
+                for i in range(3):
+                    if scale_direction[i]:  # 如果该方向需要缩放
+                        child.size[i] *= scale_factor
+                        child.size[i] = max(0.1, child.size[i])  # 确保尺寸不会太小
