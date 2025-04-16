@@ -21,6 +21,10 @@ from PyQt5.QtGui import QIcon
 from Geomentry import TransformMode, Material, GeometryType as OriginalGeometryType, Geometry, OperationMode
 from Geomentry import GeometryGroup
 from contextlib import contextmanager
+import copy
+import json
+import os
+from datetime import datetime
 
 
 
@@ -66,12 +70,46 @@ class PropertyPanel(QDockWidget):
         # 将按钮布局添加到主布局
         self.main_layout.addLayout(self.button_layout)
         
+        # 添加状态保存器组
+        self.state_group = QGroupBox("状态管理")
+        self.state_layout = QVBoxLayout()
+        self.state_group.setLayout(self.state_layout)
+        
+        # 添加状态保存和加载按钮
+        self.save_state_button = QPushButton("保存当前状态")
+        self.save_state_button.clicked.connect(self._save_current_state)
+        self.state_layout.addWidget(self.save_state_button)
+        
+        # 创建状态列表
+        self.state_list = QListWidget()
+        self.state_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.state_list.itemDoubleClicked.connect(self._load_selected_state)
+        self.state_layout.addWidget(self.state_list)
+        
+        # 添加加载和删除按钮
+        load_delete_layout = QHBoxLayout()
+        self.load_state_button = QPushButton("加载")
+        self.load_state_button.clicked.connect(self._load_selected_state)
+        self.delete_state_button = QPushButton("删除")
+        self.delete_state_button.clicked.connect(self._delete_selected_state)
+        load_delete_layout.addWidget(self.load_state_button)
+        load_delete_layout.addWidget(self.delete_state_button)
+        self.state_layout.addLayout(load_delete_layout)
+        
+        # 将状态管理组添加到主布局
+        self.main_layout.addWidget(self.state_group)
+        
         # 连接按钮信号
         self.apply_button.clicked.connect(self._on_apply)
         self.cancel_button.clicked.connect(self._on_cancel)
         
         # 存储临时数据的变量
         self.temp_data = {}
+        
+        # 初始化状态保存列表和状态数据
+        self.states = []
+        self.max_states = 50  # 最大保存状态数
+        self._load_saved_states()  # 加载已保存的状态
         
         self.setWidget(self.main_widget)
         
@@ -108,6 +146,8 @@ class PropertyPanel(QDockWidget):
             
             if hasattr(geo, 'material'):
                 self.temp_data['color'] = geo.material.color.copy()
+                # 确保临时颜色变量初始化
+                self.temp_color = geo.material.color.copy()
             
             # 创建名称输入框
             self.name_edit = QLineEdit(geo.name)
@@ -240,9 +280,24 @@ class PropertyPanel(QDockWidget):
             # 更新缩放
             if hasattr(self, 'scale_spinners') and len(self.scale_spinners) == 3:
                 self.current_geo.size = np.array([s.value() for s in self.scale_spinners])
+            
+            # 更新颜色（如果已选择）
+            if hasattr(self, 'temp_color') and hasattr(self.current_geo, 'material'):
+                self.current_geo.material.color = self.temp_color
         
         # 更新显示
         self.gl_widget.update()
+        
+        # 更新临时数据，使其与当前应用的值一致
+        self.temp_data = {
+            'name': self.current_geo.name,
+            'position': self.current_geo.position.copy(),
+            'rotation': self.current_geo.rotation.copy(),
+            'size': self.current_geo.size.copy()
+        }
+        
+        if hasattr(self.current_geo, 'material'):
+            self.temp_data['color'] = self.current_geo.material.color.copy()
     
     def _on_cancel(self):
         """取消按钮点击处理"""
@@ -281,7 +336,6 @@ class PropertyPanel(QDockWidget):
                     self.name_edit.textChanged.disconnect()
                 except:
                     pass
-                self.name_edit.textChanged.connect(self._on_name_changed)
             
             # 位置spinners
             if hasattr(self, 'pos_spinners'):
@@ -291,7 +345,6 @@ class PropertyPanel(QDockWidget):
                             spinner.valueChanged.disconnect()
                         except:
                             pass
-                        spinner.valueChanged.connect(self._on_value_changed)
             
             # 旋转spinners
             if hasattr(self, 'rot_spinners'):
@@ -301,7 +354,6 @@ class PropertyPanel(QDockWidget):
                             spinner.valueChanged.disconnect()
                         except:
                             pass
-                        spinner.valueChanged.connect(self._on_value_changed)
             
             # 缩放spinners
             if hasattr(self, 'scale_spinners'):
@@ -311,34 +363,29 @@ class PropertyPanel(QDockWidget):
                             spinner.valueChanged.disconnect()
                         except:
                             pass
-                        spinner.valueChanged.connect(self._on_value_changed)
             
-            # 颜色按钮 - 添加更严格的检查
+            # 颜色按钮 - 需保留颜色选择功能，但选择后不立即应用
             if hasattr(self, 'color_button') and self.color_button is not None:
                 try:
-                    # 检查按钮是否有效 - 使用 sip.isdeleted 检查
                     import sip
                     if not sip.isdeleted(self.color_button):
                         try:
                             self.color_button.clicked.disconnect()
                         except:
                             pass
-                        self.color_button.clicked.connect(self._pick_color)
+                        self.color_button.clicked.connect(self._pick_color_preview)  # 修改为预览方法
                 except ImportError:
-                    # 如果无法导入 sip，使用替代检查
                     try:
-                        # 尝试访问一个属性来检查对象是否有效
-                        self.color_button.objectName()  # 测试对象是否响应
+                        self.color_button.objectName()
                         self.color_button.clicked.disconnect()
-                        self.color_button.clicked.connect(self._pick_color)
+                        self.color_button.clicked.connect(self._pick_color_preview)  # 修改为预览方法
                     except RuntimeError:
-                        # 如果发生错误，按钮可能已被删除
                         print("警告: 颜色按钮可能已被删除，跳过信号连接")
                         pass
-                
+            
             # 颜色预览区域点击也可以打开颜色选择器
             if hasattr(self, 'color_preview') and self.color_preview is not None:
-                self.color_preview.mousePressEvent = lambda event: self._pick_color()
+                self.color_preview.mousePressEvent = lambda event: self._pick_color_preview()  # 修改为预览方法
                 self.color_preview.setCursor(Qt.PointingHandCursor)
                 
         except Exception as e:
@@ -521,8 +568,8 @@ class PropertyPanel(QDockWidget):
         else:
             yield
 
-    def _pick_color(self):
-        """打开颜色选择器修改当前物体颜色"""
+    def _pick_color_preview(self):
+        """打开颜色选择器但仅预览颜色，不立即应用到几何体"""
         if not hasattr(self, 'current_geo') or self.current_geo is None:
             return
         
@@ -544,28 +591,16 @@ class PropertyPanel(QDockWidget):
         if not color.isValid():
             return
         
-        # 应用新颜色
-        self._apply_color(color)
-
-    def _apply_color(self, qcolor):
-        """应用QColor到当前物体"""
-        if not self.current_geo or not hasattr(self.current_geo, 'material'):
-            return
-        
-        # 更新预览颜色
+        # 仅更新预览，不应用到几何体
         if hasattr(self, 'color_preview') and self.color_preview is not None:
             self.color_preview.setStyleSheet(
-                f"background-color: {qcolor.name()}; border: 1px solid #888;")
+                f"background-color: {color.name()}; border: 1px solid #888;")
         
-        # 转换颜色值并应用到物体
-        rgba = [qcolor.redF(), qcolor.greenF(), qcolor.blueF(), 1.0]
-        self.current_geo.material.color = rgba
-        
-        # 更新3D视图
-        self.gl_widget.update()
+        # 保存颜色值到临时数据
+        self.temp_color = [color.redF(), color.greenF(), color.blueF(), 1.0]
 
     def _apply_preset_color(self, color_rgb):
-        """应用预设颜色"""
+        """应用预设颜色到预览，但不立即应用到几何体"""
         if not self.current_geo or not hasattr(self.current_geo, 'material'):
             return
         
@@ -576,8 +611,13 @@ class PropertyPanel(QDockWidget):
             int(color_rgb[2] * 255)
         )
         
-        # 应用颜色
-        self._apply_color(qcolor)
+        # 仅更新预览
+        if hasattr(self, 'color_preview') and self.color_preview is not None:
+            self.color_preview.setStyleSheet(
+                f"background-color: {qcolor.name()}; border: 1px solid #888;")
+        
+        # 保存颜色值到临时数据
+        self.temp_color = [qcolor.redF(), qcolor.greenF(), qcolor.blueF(), 1.0]
 
     def clear_layout(self, layout):
         """清除布局中的所有小部件，确保它们被正确删除"""
@@ -603,3 +643,377 @@ class PropertyPanel(QDockWidget):
         
         self.current_geo.visible = checked
         self.gl_widget.update()
+
+    def _save_current_state(self):
+        """保存当前场景的所有几何体状态"""
+        if not self.gl_widget.geometries:
+            QMessageBox.warning(self, "保存失败", "当前场景中没有几何体对象，无法保存状态。")
+            return
+            
+        try:
+            # 保存时间戳
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # 创建几何体状态副本
+            geometries_copy = self._serialize_geometries(self.gl_widget.geometries)
+            
+            # 保存摄像机状态
+            camera_config = {}
+            if hasattr(self.gl_widget, 'get_camera_config'):
+                # 检查方法是否需要参数
+                import inspect
+                sig = inspect.signature(self.gl_widget.get_camera_config)
+                if len(sig.parameters) == 0:
+                    camera_config = self.gl_widget.get_camera_config()
+                else:
+                    print("相机配置方法需要参数，跳过获取相机状态")
+            else:
+                # 手动构建相机配置
+                for attr in ['camera_position', 'camera_target', 'camera_up', 'fov', 'near_plane', 'far_plane']:
+                    if hasattr(self.gl_widget, attr):
+                        value = getattr(self.gl_widget, attr)
+                        if isinstance(value, np.ndarray):
+                            camera_config[attr] = value.tolist()
+                        else:
+                            camera_config[attr] = value
+            
+            # 创建完整状态字典
+            state = {
+                'timestamp': timestamp,
+                'geometries': geometries_copy,
+                'camera': camera_config
+            }
+            
+            # 添加到状态列表
+            self.states.append(state)
+            
+            # 如果超过最大状态数，删除最早的状态
+            while len(self.states) > self.max_states:
+                self.states.pop(0)
+            
+            # 更新状态列表UI
+            self._update_state_list()
+            
+            # 保存状态到文件
+            self._save_states_to_file()
+            
+            QMessageBox.information(self, "保存成功", f"场景状态已保存: {timestamp}")
+        except Exception as e:
+            import traceback
+            error_message = f"保存状态时发生错误:\n{str(e)}"
+            print(error_message)
+            traceback.print_exc()
+            QMessageBox.critical(self, "保存失败", error_message)
+        
+    def _load_selected_state(self):
+        """加载选中的状态"""
+        selected_items = self.state_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "加载失败", "请先选择一个状态。")
+            return
+            
+        # 获取选中的索引
+        index = self.state_list.row(selected_items[0])
+        if index < 0 or index >= len(self.states):
+            return
+            
+        # 确认是否加载
+        reply = QMessageBox.question(
+            self, 
+            "加载状态", 
+            "加载状态将覆盖当前场景所有几何体，确定继续吗？",
+            QMessageBox.Yes | QMessageBox.No, 
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+            
+        try:
+            # 加载状态
+            selected_state = self.states[index]
+            
+            # 清除当前几何体
+            self.gl_widget.geometries.clear()
+            
+            # 反序列化并加载几何体
+            geometries = self._deserialize_geometries(selected_state['geometries'])
+            for geo in geometries:
+                self.gl_widget.add_geometry(geo)
+            
+            # 恢复摄像机状态（检查方法是否存在并且能接受参数）
+            if 'camera' in selected_state:
+                camera_config = selected_state['camera']
+                # 检查方法是否存在
+                if hasattr(self.gl_widget, 'update_camera_config'):
+                    # 检查方法是否能接受参数
+                    import inspect
+                    sig = inspect.signature(self.gl_widget.update_camera_config)
+                    if len(sig.parameters) > 0:
+                        # 方法能接受参数
+                        self.gl_widget.update_camera_config(camera_config)
+                    else:
+                        # 方法不接受参数，但我们可以手动设置属性
+                        print("相机配置方法不接受参数，尝试直接设置属性...")
+                        for key, value in camera_config.items():
+                            if hasattr(self.gl_widget, key):
+                                try:
+                                    setattr(self.gl_widget, key, value)
+                                except:
+                                    print(f"无法设置相机属性: {key}")
+            
+            # 更新视图
+            self.gl_widget.update()
+            
+            # 清除当前选中状态
+            self.gl_widget.set_selection(None)
+            self.on_selection_changed(None)
+            
+            QMessageBox.information(self, "加载成功", f"场景状态已加载: {selected_state['timestamp']}")
+        except Exception as e:
+            error_message = f"加载状态失败: {str(e)}"
+            print(error_message)
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "加载失败", error_message)
+        
+    def _delete_selected_state(self):
+        """删除选中的状态"""
+        selected_items = self.state_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "删除失败", "请先选择一个状态。")
+            return
+            
+        # 获取选中的索引
+        index = self.state_list.row(selected_items[0])
+        if index < 0 or index >= len(self.states):
+            return
+            
+        # 确认是否删除
+        reply = QMessageBox.question(
+            self, 
+            "删除状态", 
+            "确定要删除选中的状态吗？此操作无法恢复。",
+            QMessageBox.Yes | QMessageBox.No, 
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+            
+        # 删除状态
+        removed_state = self.states.pop(index)
+        
+        # 更新状态列表UI
+        self._update_state_list()
+        
+        # 保存更新后的状态列表
+        self._save_states_to_file()
+        
+        QMessageBox.information(self, "删除成功", f"已删除状态: {removed_state['timestamp']}")
+        
+    def _update_state_list(self):
+        """更新状态列表UI"""
+        self.state_list.clear()
+        for state in reversed(self.states):  # 显示最新的在前面
+            item = QListWidgetItem(state['timestamp'])
+            # 添加几何体数量提示
+            geo_count = len(state['geometries'])
+            item.setToolTip(f"包含 {geo_count} 个几何体对象")
+            self.state_list.addItem(item)
+            
+    def _serialize_geometries(self, geometries):
+        """将几何体对象序列化为可存储的格式"""
+        serialized = []
+        
+        for geo in geometries:
+            if hasattr(geo, 'type') and geo.type == "group":
+                # 处理组对象
+                group_data = {
+                    'type': 'group',
+                    'name': geo.name,
+                    'position': geo.position.tolist() if isinstance(geo.position, np.ndarray) else geo.position,
+                    'rotation': geo.rotation.tolist() if isinstance(geo.rotation, np.ndarray) else geo.rotation,
+                    'size': geo.size.tolist() if isinstance(geo.size, np.ndarray) else geo.size
+                }
+                
+                # 只有当有子对象时才添加子对象列表
+                if hasattr(geo, 'children'):
+                    group_data['children'] = self._serialize_geometries(geo.children)
+                else:
+                    group_data['children'] = []
+                    
+                # 检查可见性属性（如果存在）
+                if hasattr(geo, 'visible'):
+                    group_data['visible'] = geo.visible
+                
+                serialized.append(group_data)
+            else:
+                # 处理普通几何体
+                serialized_geo = {
+                    'geo_type': geo.type,
+                    'name': geo.name,
+                    'position': geo.position.tolist() if isinstance(geo.position, np.ndarray) else geo.position,
+                    'rotation': geo.rotation.tolist() if isinstance(geo.rotation, np.ndarray) else geo.rotation,
+                    'size': geo.size.tolist() if isinstance(geo.size, np.ndarray) else geo.size
+                }
+                
+                # 检查可见性属性（如果存在）
+                if hasattr(geo, 'visible'):
+                    serialized_geo['visible'] = geo.visible
+                
+                # 添加材质属性（如果有）
+                if hasattr(geo, 'material'):
+                    material_data = {}
+                    
+                    if hasattr(geo.material, 'color'):
+                        material_data['color'] = geo.material.color.tolist() if isinstance(geo.material.color, np.ndarray) else geo.material.color
+                    
+                    # 安全获取附加材质属性
+                    for prop in ['roughness', 'metallic', 'shininess']:
+                        if hasattr(geo.material, prop):
+                            material_data[prop] = getattr(geo.material, prop)
+                    
+                    # 处理特殊的numpy数组属性
+                    if hasattr(geo.material, 'specular') and getattr(geo.material, 'specular') is not None:
+                        material_data['specular'] = geo.material.specular.tolist() if isinstance(geo.material.specular, np.ndarray) else geo.material.specular
+                    
+                    serialized_geo['material'] = material_data
+                    
+                serialized.append(serialized_geo)
+                
+        return serialized
+        
+    def _deserialize_geometries(self, serialized):
+        """从序列化数据还原几何体对象"""
+        geometries = []
+        
+        for data in serialized:
+            if data.get('type') == 'group':
+                # 创建组对象
+                try:
+                    group = GeometryGroup(
+                        name=data['name'],
+                        position=np.array(data['position']),
+                        rotation=np.array(data['rotation'])
+                    )
+                    
+                    # 安全设置大小，如果有的话
+                    if 'size' in data:
+                        group.size = np.array(data['size'])
+                    
+                    # 设置可见性（如果数据中有且对象支持）
+                    if 'visible' in data and hasattr(group, 'visible'):
+                        group.visible = data['visible']
+                    
+                    # 递归添加子对象
+                    children = self._deserialize_geometries(data.get('children', []))
+                    for child in children:
+                        group.add_child(child)
+                        
+                    geometries.append(group)
+                except Exception as e:
+                    print(f"创建组对象失败: {str(e)}")
+                    print(f"组数据: {data}")
+                    continue
+            else:
+                # 创建普通几何体
+                try:
+                    geo = Geometry(
+                        geo_type=data['geo_type'],
+                        name=data['name'],
+                        position=np.array(data['position']),
+                        rotation=np.array(data['rotation']),
+                        size=np.array(data['size'])
+                    )
+                    
+                    # 设置可见性（如果数据中有且对象支持）
+                    if 'visible' in data and hasattr(geo, 'visible'):
+                        geo.visible = data['visible']
+                    
+                    # 还原材质（如果有）
+                    if 'material' in data and hasattr(geo, 'material'):
+                        # 安全设置材质属性
+                        if 'color' in data['material']:
+                            geo.material.color = np.array(data['material']['color'])
+                        
+                        # 设置其他可能的材质属性
+                        material_props = ['roughness', 'metallic', 'shininess']
+                        for prop in material_props:
+                            if prop in data['material'] and hasattr(geo.material, prop):
+                                setattr(geo.material, prop, data['material'][prop])
+                        
+                        # 处理颜色数组属性
+                        if 'specular' in data['material'] and hasattr(geo.material, 'specular'):
+                            geo.material.specular = np.array(data['material']['specular'])
+                            
+                    geometries.append(geo)
+                except Exception as e:
+                    print(f"创建几何体失败: {str(e)}")
+                    print(f"几何体数据: {data}")
+                    continue
+                
+        return geometries
+    
+    def _save_states_to_file(self):
+        """将状态保存到文件"""
+        try:
+            # 确保目录存在
+            save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'saved_states')
+            os.makedirs(save_dir, exist_ok=True)
+            
+            # 保存状态到文件，使用自定义编码器处理numpy数组
+            save_path = os.path.join(save_dir, 'saved_states.json')
+            with open(save_path, 'w', encoding='utf-8') as f:
+                json.dump(self.states, f, ensure_ascii=False, indent=2, cls=NumpyJSONEncoder)
+                
+        except Exception as e:
+            print(f"保存状态到文件失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
+    def _load_saved_states(self):
+        """从文件加载已保存的状态"""
+        try:
+            save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'saved_states')
+            save_path = os.path.join(save_dir, 'saved_states.json')
+            
+            if os.path.exists(save_path):
+                with open(save_path, 'r', encoding='utf-8') as f:
+                    self.states = json.load(f)
+                    
+                # 将旧版本的状态数据转换为新格式
+                for state in self.states:
+                    if 'camera' not in state:
+                        # 添加默认摄像机配置
+                        state['camera'] = {
+                            'position': [5, 5, 5],
+                            'target': [0, 0, 0],
+                            'up': [0, 1, 0],
+                            'fov': 45.0,
+                            'near': 0.1,
+                            'far': 1000.0
+                        }
+                        
+                # 限制状态数量
+                while len(self.states) > self.max_states:
+                    self.states.pop(0)
+                    
+                # 更新状态列表UI
+                self._update_state_list()
+                
+        except Exception as e:
+            print(f"加载保存的状态失败: {str(e)}")
+            # 初始化为空列表
+            self.states = []
+
+class NumpyJSONEncoder(json.JSONEncoder):
+    """处理numpy数组JSON序列化的自定义编码器"""
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        return super().default(obj)
