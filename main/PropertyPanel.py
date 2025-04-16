@@ -81,6 +81,17 @@ class PropertyPanel(QDockWidget):
         self._in_update = True  # 设置更新标志
         
         try:
+            # 在调用 clear_layout 前，清除所有控件引用
+            # 这样可以避免引用已删除的控件
+            if hasattr(self, 'form_layout') and self.form_layout.count() > 0:
+                # 即将重建界面，先清除旧控件引用
+                self.name_edit = None
+                self.pos_spinners = []
+                self.rot_spinners = []
+                self.scale_spinners = []
+                self.color_button = None
+                self.color_preview = None  # 如果有颜色预览控件
+            
             # 清除旧的控件
             self.clear_layout(self.form_layout)
             
@@ -302,14 +313,29 @@ class PropertyPanel(QDockWidget):
                             pass
                         spinner.valueChanged.connect(self._on_value_changed)
             
-            # 颜色按钮
+            # 颜色按钮 - 添加更严格的检查
             if hasattr(self, 'color_button') and self.color_button is not None:
                 try:
-                    self.color_button.clicked.disconnect()
-                except:
-                    pass
-                self.color_button.clicked.connect(self._pick_color)
-            
+                    # 检查按钮是否有效 - 使用 sip.isdeleted 检查
+                    import sip
+                    if not sip.isdeleted(self.color_button):
+                        try:
+                            self.color_button.clicked.disconnect()
+                        except:
+                            pass
+                        self.color_button.clicked.connect(self._pick_color)
+                except ImportError:
+                    # 如果无法导入 sip，使用替代检查
+                    try:
+                        # 尝试访问一个属性来检查对象是否有效
+                        self.color_button.objectName()  # 测试对象是否响应
+                        self.color_button.clicked.disconnect()
+                        self.color_button.clicked.connect(self._pick_color)
+                    except RuntimeError:
+                        # 如果发生错误，按钮可能已被删除
+                        print("警告: 颜色按钮可能已被删除，跳过信号连接")
+                        pass
+                
             # 颜色预览区域点击也可以打开颜色选择器
             if hasattr(self, 'color_preview') and self.color_preview is not None:
                 self.color_preview.mousePressEvent = lambda event: self._pick_color()
@@ -402,8 +428,8 @@ class PropertyPanel(QDockWidget):
                         self.pos_spinners[2].value()
                     ]
                 
-                # 只有非组对象才更新这些属性
-                if self.current_geo.type != "group":
+                # 只有非组对象才直接更新这些属性
+                if not hasattr(self.current_geo, 'type') or self.current_geo.type != "group":
                     # 更新旋转
                     if hasattr(self, 'rot_spinners') and self.rot_spinners:
                         self.current_geo.rotation = [
@@ -419,6 +445,65 @@ class PropertyPanel(QDockWidget):
                             self.scale_spinners[1].value(),
                             self.scale_spinners[2].value()
                         ]
+                else:
+                    # 组对象需要特殊处理
+                    # 旋转属性可以直接更新
+                    if hasattr(self, 'rot_spinners') and self.rot_spinners:
+                        self.current_geo.rotation = [
+                            self.rot_spinners[0].value(),
+                            self.rot_spinners[1].value(),
+                            self.rot_spinners[2].value()
+                        ]
+                    
+                    # 缩放属性需要应用组缩放逻辑
+                    if hasattr(self, 'scale_spinners') and self.scale_spinners and hasattr(self, 'temp_data'):
+                        # 获取原始尺寸和新尺寸（添加安全检查）
+                        old_size = np.array(self.temp_data.get('size', [1.0, 1.0, 1.0]))
+                        new_size = np.array([
+                            self.scale_spinners[0].value(),
+                            self.scale_spinners[1].value(),
+                            self.scale_spinners[2].value()
+                        ])
+                        
+                        # 防止除零错误和无效值
+                        scale_factors = np.ones(3)  # 默认不缩放
+                        for i in range(3):
+                            # 确保旧尺寸不为零
+                            if abs(old_size[i]) > 0.0001:
+                                scale_factors[i] = new_size[i] / old_size[i]
+                            else:
+                                # 如果旧尺寸接近零，使用新尺寸作为绝对值
+                                scale_factors[i] = 1.0  # 不缩放
+                                # 如果新尺寸有效，则直接设置
+                                if new_size[i] > 0.0001:
+                                    self.current_geo.size[i] = new_size[i]
+                        
+                        # 对组应用缩放逻辑
+                        for i in range(3):
+                            # 检查哪些维度需要缩放
+                            if abs(scale_factors[i] - 1.0) > 0.0001 and np.isfinite(scale_factors[i]):  # 确保是有限值
+                                # 创建缩放方向向量
+                                scale_direction = [0, 0, 0]
+                                scale_direction[i] = 1
+                                
+                                # 应用组缩放逻辑
+                                if hasattr(self.gl_widget, '_scale_group_recursive'):
+                                    self.gl_widget._scale_group_recursive(
+                                        self.current_geo,
+                                        self.current_geo.position,
+                                        scale_factors[i],
+                                        scale_direction
+                                    )
+                        
+                        # 更新临时数据中的尺寸，以便下次计算缩放因子
+                        self.temp_data['size'] = new_size.tolist()
+                        
+                        # 设置组的尺寸属性
+                        self.current_geo.size = new_size
+        except Exception as e:
+            print(f"更新属性时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
         finally:
             self._in_update = False
             # 确保立即更新视图
@@ -495,7 +580,7 @@ class PropertyPanel(QDockWidget):
         self._apply_color(qcolor)
 
     def clear_layout(self, layout):
-        """清除布局中的所有小部件"""
+        """清除布局中的所有小部件，确保它们被正确删除"""
         if layout is None:
             return
             
@@ -504,11 +589,12 @@ class PropertyPanel(QDockWidget):
             widget = item.widget()
             
             if widget is not None:
-                widget.deleteLater()
+                widget.setParent(None)  # 先解除父子关系
+                widget.deleteLater()    # 安排在事件循环中删除
             elif item.layout() is not None:
                 # 递归清除子布局
                 self.clear_layout(item.layout())
-                item.layout().deleteLater()
+                item.layout().setParent(None)  # 解除父子关系
     
     def _on_visibility_changed(self, checked):
         """处理可见性变更"""

@@ -1,4 +1,3 @@
-
 import sys
 import numpy as np
 from PyQt5.QtWidgets import *
@@ -22,6 +21,7 @@ from PyQt5.QtGui import QIcon
 from Geomentry import TransformMode, Material, GeometryType as OriginalGeometryType, Geometry, OperationMode
 from Geomentry import GeometryGroup
 from contextlib import contextmanager
+from Controlpanel import ControlPanel  # 假设ControlPanel在同一个包中的ControlPanel.py文件中
 
 class GeometryType(OriginalGeometryType):
     if not hasattr(OriginalGeometryType, 'ELLIPSOID'):

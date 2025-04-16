@@ -1579,53 +1579,75 @@ class OpenGLWidget(QOpenGLWidget):
             else:
                 axis_index = self.active_axis
             
+            # 确定缩放因子
+            scale_factor = 1.0
+            scale_direction = [0, 0, 0]
+            
             if axis_index < 3:  # 单轴缩放
                 axis_vector = axis_vectors[axis_index]
                 
                 # 计算视图与轴之间的点积，决定正负方向
                 view_dot = np.dot(view_dir, axis_vector)
                 
-                # 计算有效拖动量：水平拖动(dx)更符合直觉
-                # 如果轴与视图接近垂直，使用垂直拖动(dy)
+                # 计算有效拖动量
                 if axis_index == 2:
                     drag_amount = -dy * 0.01  # 垂直拖动，上移增大
                 else:
                     # 确定水平拖动方向（右移增大还是左移增大）
                     drag_amount = dx * 0.01 * (1 if view_dot < 0 else -1)
                 
-                # 获取当前尺寸
-                current_size = list(self.selected_geo.size)
+                # 计算缩放因子
+                scale_factor = 1.0 + drag_amount
+                scale_direction[axis_index] = 1
                 
-                # 应用缩放
-                current_size[axis_index] += drag_amount
-                
-                # 确保尺寸不会太小
-                current_size[axis_index] = max(0.1, current_size[axis_index])
-                
-                # 应用新的尺寸
-                self.selected_geo.size = current_size
-            
             elif axis_index == 3:  # 均匀缩放（中心控件）
                 # 对于均匀缩放，使用水平和垂直拖动的平均值
                 drag_amount = (dx + dy) * 0.005
                 
-                # 获取当前尺寸
-                current_size = list(self.selected_geo.size)
-                
-                # 均匀应用缩放
-                for i in range(3):
-                    current_size[i] += drag_amount
-                    current_size[i] = max(0.1, current_size[i])
-                
-                # 应用新的尺寸
-                self.selected_geo.size = current_size
+                # 计算缩放因子
+                scale_factor = 1.0 + drag_amount
+                scale_direction = [1, 1, 1]  # 所有方向都缩放
             
-            # 如果是组，确保更新子对象的变换
-            if self.selected_geo.type == "group":
+            # 检查缩放因子是否有效
+            if not np.isfinite(scale_factor) or abs(scale_factor) < 0.0001:
+                print(f"警告: 缩放因子无效 ({scale_factor})，跳过缩放操作")
+                return
+            
+            # 检查是否是组对象
+            if hasattr(self.selected_geo, 'type') and self.selected_geo.type == "group":
+                # 使用 _scale_group_recursive 进行组缩放
+                self._scale_group_recursive(
+                    self.selected_geo, 
+                    self.selected_geo.position, 
+                    scale_factor, 
+                    scale_direction
+                )
+                
+                # 更新组的变换矩阵（如果有）
                 if hasattr(self.selected_geo, '_update_transform'):
                     self.selected_geo._update_transform()
                 if hasattr(self.selected_geo, '_update_children_transforms'):
                     self.selected_geo._update_children_transforms()
+            else:
+                # 普通物体的缩放处理
+                current_size = list(self.selected_geo.size)
+                
+                # 根据缩放方向应用缩放
+                for i in range(3):
+                    if scale_direction[i]:
+                        # 应用缩放因子到尺寸
+                        if axis_index < 3:  # 单轴缩放
+                            # 直接增加/减少
+                            current_size[i] += drag_amount
+                        else:  # 均匀缩放
+                            # 使用乘法缩放
+                            current_size[i] *= scale_factor
+                        
+                        # 确保尺寸不会太小
+                        current_size[i] = max(0.1, current_size[i])
+                
+                # 应用新的尺寸
+                self.selected_geo.size = current_size
         
         except Exception as e:
             print(f"缩放拖拽出错: {str(e)}")
@@ -2752,7 +2774,7 @@ class OpenGLWidget(QOpenGLWidget):
             
             # 从相机属性获取信息
             camera_pos = np.array(self.camera_config['position'])
-            camera_target = np.array(self._camera_target)  # 使用_camera_target属性
+            camera_target = np.array(self._camera_target)
             
             # 获取视图方向
             view_dir = camera_target - camera_pos
@@ -2778,26 +2800,29 @@ class OpenGLWidget(QOpenGLWidget):
                 sign = -1 if view_dot < 0 else 1
                 drag_amount = dx * scale_speed * sign
             
-            # 获取轴的索引
+            # 计算缩放因子和方向
+            scale_factor = 1.0 + drag_amount
             axis_index = {'x': 0, 'y': 1, 'z': 2}[axis_name]
+            scale_direction = [0, 0, 0]
+            scale_direction[axis_index] = 1
             
             # 检查是否是组对象
             if hasattr(self.selected_geo, 'type') and self.selected_geo.type == "group":
-                # 计算缩放因子
-                scale_factor = 1.0 + drag_amount
-                
-                # 创建缩放方向向量 (哪个方向需要缩放)
-                scale_direction = [0, 0, 0]
-                scale_direction[axis_index] = 1
-                
-                # 调用组的递归缩放函数
-                self._scale_group_recursive(self.selected_geo, self.selected_geo.position, scale_factor, scale_direction)
-                
-                # 更新组的变换
-                if hasattr(self.selected_geo, '_update_transform'):
-                    self.selected_geo._update_transform()
-                if hasattr(self.selected_geo, '_update_children_transforms'):
-                    self.selected_geo._update_children_transforms()
+                # 确保缩放因子有效
+                if np.isfinite(scale_factor) and abs(scale_factor) > 0.0001:
+                    # 调用组的递归缩放函数
+                    self._scale_group_recursive(
+                        self.selected_geo, 
+                        self.selected_geo.position,
+                        scale_factor, 
+                        scale_direction
+                    )
+                    
+                    # 更新组的变换
+                    if hasattr(self.selected_geo, '_update_transform'):
+                        self.selected_geo._update_transform()
+                    if hasattr(self.selected_geo, '_update_children_transforms'):
+                        self.selected_geo._update_children_transforms()
             else:
                 # 普通物体的缩放处理
                 current_size = list(self.selected_geo.size)
@@ -3025,9 +3050,8 @@ class OpenGLWidget(QOpenGLWidget):
         else:
             return -1 + (4 - 2 * t) * t
 
-    # 请确保添加以下递归缩放函数到OpenGLWidget类中
     def _scale_group_recursive(self, group, center, scale_factor, scale_direction):
-        """递归缩放组及其内部所有物体
+        """递归缩放组及其内部所有物体的局部坐标和尺寸
         
         Args:
             group: 要缩放的组
@@ -3035,31 +3059,63 @@ class OpenGLWidget(QOpenGLWidget):
             scale_factor: 缩放因子
             scale_direction: 缩放方向 [x_scale, y_scale, z_scale]，值为1表示该方向缩放
         """
+        # 健壮性检查
+        if not hasattr(group, 'children') or not group.children:
+            return
+            
+        # 验证缩放因子
+        if not np.isfinite(scale_factor) or abs(scale_factor) < 0.0001:
+            print(f"警告: 缩放因子无效 ({scale_factor})，跳过缩放操作")
+            return
+        
+        # 确保缩放方向有效
+        if not isinstance(scale_direction, list) or len(scale_direction) != 3:
+            print(f"警告: 缩放方向无效 ({scale_direction})，跳过缩放操作")
+            return
+        
         # 遍历组内所有子物体
         for child in group.children:
-            # 计算子物体相对于组中心的偏移向量
-            offset = child.position - center
-            
-            # 对偏移向量应用缩放
-            new_position = center.copy()  # 从中心点开始
-            for i in range(3):
-                if scale_direction[i]:  # 如果该方向需要缩放
-                    # 在该方向上应用缩放因子
-                    new_position[i] += offset[i] * scale_factor
-                else:
-                    # 不缩放的方向保持原样
-                    new_position[i] += offset[i]
-            
-            # 更新子物体位置
-            child.position = new_position
-            
-            # 根据子物体类型处理
-            if hasattr(child, 'type') and child.type == "group":
-                # 如果子物体是组，递归处理
-                self._scale_group_recursive(child, child.position, scale_factor, scale_direction)
-            else:
-                # 如果是普通物体，缩放其尺寸
+            # 验证child和center有效性
+            if child is None or center is None:
+                continue
+                
+            try:
+                # 计算子物体相对于组中心的偏移向量（局部坐标）
+                local_offset = child.position - center
+                
+                # 对局部坐标应用缩放
+                new_position = center.copy()  # 从中心点开始
                 for i in range(3):
                     if scale_direction[i]:  # 如果该方向需要缩放
-                        child.size[i] *= scale_factor
-                        child.size[i] = max(0.1, child.size[i])  # 确保尺寸不会太小
+                        # 在该方向上应用缩放因子，检查有效性
+                        offset_value = local_offset[i] * scale_factor
+                        if np.isfinite(offset_value):  # 确保结果是有限值
+                            new_position[i] += offset_value
+                        else:
+                            new_position[i] += local_offset[i]  # 使用原始偏移
+                    else:
+                        # 不缩放的方向保持原样
+                        new_position[i] += local_offset[i]
+                
+                # 确保新位置有效
+                if np.all(np.isfinite(new_position)):
+                    # 更新子物体位置（局部坐标）
+                    child.position = new_position
+                
+                # 根据子物体类型处理
+                if hasattr(child, 'type') and child.type == "group":
+                    # 如果子物体是组，递归处理其子物体
+                    # 注意：使用子组自身的位置作为新的缩放中心点
+                    self._scale_group_recursive(child, child.position, scale_factor, scale_direction)
+                else:
+                    # 如果是普通物体，缩放其尺寸
+                    for i in range(3):
+                        if scale_direction[i]:  # 如果该方向需要缩放
+                            # 确保尺寸和缩放因子有效
+                            if hasattr(child, 'size') and np.isfinite(scale_factor):
+                                new_size = child.size[i] * scale_factor
+                                if np.isfinite(new_size):  # 确保结果是有限值
+                                    child.size[i] = max(0.1, new_size)  # 确保尺寸不会太小
+            except Exception as e:
+                print(f"缩放子物体时出错: {str(e)}")
+                # 继续处理下一个子物体，不中断整个过程
