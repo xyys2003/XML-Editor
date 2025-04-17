@@ -1,6 +1,3 @@
-
-
-
 import sys
 import numpy as np
 from PyQt5.QtWidgets import *
@@ -36,39 +33,331 @@ if not hasattr(GeometryType, 'ELLIPSOID'):
 class XMLParser:
     @staticmethod
     def load(filename):
+        """
+        从XML文件导入几何体和组层级结构，保持与export_enhanced_xml导出格式兼容
+        """
         try:
             tree = ET.parse(filename)
             root = tree.getroot()
             geometries = []
             
-            # 解析XML结构
-            for body in root.findall(".//body"):
-                pos = list(map(float, body.get('pos', '0 0 0').split()))
-                for geom in body.findall('geom'):
-                    geo_type = geom.get('type')
-                    size = list(map(float, geom.get('size', '1 1 1').split()))
+            # 检查文件格式类型
+            is_mujoco_format = root.tag == "mujoco"
+            is_enhanced_format = root.tag == "Scene"
+            
+            if is_enhanced_format:
+                # 处理增强格式的XML（对应export_enhanced_xml方法）
+                objects_node = root.find("Objects")
+                if objects_node is not None:
+                    # 递归处理对象树
+                    def process_node(node, parent=None):
+                        results = []
+                        
+                        for child in node:
+                            if child.tag == "Group":
+                                # 创建组
+                                name = child.get("name", "Group")
+                                
+                                # 解析位置
+                                pos_elem = child.find("Position")
+                                position = [0, 0, 0]
+                                if pos_elem is not None:
+                                    position = [
+                                        float(pos_elem.get("x", 0)),
+                                        float(pos_elem.get("y", 0)),
+                                        float(pos_elem.get("z", 0))
+                                    ]
+                                
+                                # 解析旋转
+                                rot_elem = child.find("Rotation")
+                                rotation = [0, 0, 0]
+                                if rot_elem is not None:
+                                    rotation = [
+                                        float(rot_elem.get("x", 0)),
+                                        float(rot_elem.get("y", 0)),
+                                        float(rot_elem.get("z", 0))
+                                    ]
+                                
+                                # 创建组对象
+                                group = GeometryGroup(name=name, position=position, rotation=rotation, parent=parent)
+                                
+                                # 处理子节点
+                                children_elem = child.find("Children")
+                                if children_elem is not None:
+                                    child_objects = process_node(children_elem, group)
+                                    for child_obj in child_objects:
+                                        if parent is None:  # 顶层对象
+                                            group.add_child(child_obj)
+                                
+                                if parent is None:
+                                    results.append(group)
+                                else:
+                                    parent.add_child(group)
+                                
+                            elif child.tag == "Geometry":
+                                # 处理几何体
+                                name = child.get("name", "Object")
+                                geo_type = child.get("type", "box")
+                                
+                                # 解析位置
+                                pos_elem = child.find("Position")
+                                position = [0, 0, 0]
+                                if pos_elem is not None:
+                                    position = [
+                                        float(pos_elem.get("x", 0)),
+                                        float(pos_elem.get("y", 0)),
+                                        float(pos_elem.get("z", 0))
+                                    ]
+                                    
+                                # 解析尺寸
+                                size_elem = child.find("Size")
+                                size = [1, 1, 1]
+                                if size_elem is not None:
+                                    size = [
+                                        float(size_elem.get("x", 1)),
+                                        float(size_elem.get("y", 1)),
+                                        float(size_elem.get("z", 1))
+                                    ]
+                                    
+                                # 解析旋转
+                                rot_elem = child.find("Rotation")
+                                rotation = [0, 0, 0]
+                                if rot_elem is not None:
+                                    rotation = [
+                                        float(rot_elem.get("x", 0)),
+                                        float(rot_elem.get("y", 0)),
+                                        float(rot_elem.get("z", 0))
+                                    ]
+                                
+                                # 创建几何体
+                                geo = Geometry(
+                                    geo_type=geo_type, 
+                                    name=name,
+                                    position=position,
+                                    size=size,
+                                    rotation=rotation,
+                                    parent=parent
+                                )
+                                
+                                # 处理材质
+                                material_elem = child.find("Material")
+                                if material_elem is not None:
+                                    color_elem = material_elem.find("Color")
+                                    if color_elem is not None:
+                                        color = [
+                                            float(color_elem.get("r", 1.0)),
+                                            float(color_elem.get("g", 1.0)),
+                                            float(color_elem.get("b", 1.0)),
+                                            float(color_elem.get("a", 1.0))
+                                        ]
+                                        geo.material.color = color
+                                
+                                if parent is None:
+                                    results.append(geo)
+                                else:
+                                    parent.add_child(geo)
+                        
+                        return results
                     
-                    # 根据类型调整尺寸参数
-                    if geo_type == 'sphere':
-                        size = [size[0], size[0], size[0]]  # 球体使用相同的三个半径
-                    elif geo_type == 'ellipsoid':
-                        # 椭球体需要三个不同的半径
-                        if len(size) < 3:
-                            size.extend([size[0]] * (3 - len(size)))  # 补全缺少的尺寸
-                    elif geo_type == 'capsule' or geo_type == 'cylinder':
-                        # 半径和高度
-                        if len(size) < 2:
-                            size.append(1.0)  # 默认高度
-                        size.append(0)  # 第三个参数设为0
+                    # 开始处理对象节点
+                    geometries = process_node(objects_node)
                     
-                    geometries.append(Geometry(
+            elif is_mujoco_format:
+                # 处理MuJoCo格式的XML
+                # 同您已经实现的部分逻辑，但需要处理子节点关系
+                
+                # 创建一个字典来跟踪body和对应的几何体组
+                body_groups = {}
+                parent_map = {}  # 用于跟踪父子关系
+                
+                # 构建父子关系映射
+                for body in root.findall(".//body"):
+                    body_name = body.get('name', 'Unnamed')
+                    # 寻找直接父body
+                    parent_body = None
+                    for parent in root.findall(".//body"):
+                        if body in parent.findall("./body"):
+                            parent_body = parent
+                            break
+                    
+                    if parent_body is not None:
+                        parent_map[body_name] = parent_body.get('name', 'Unnamed')
+                
+                # 处理所有body
+                for body in root.findall(".//body"):
+                    body_name = body.get('name', 'Unnamed')
+                    if body_name in body_groups:
+                        continue  # 跳过已处理的body
+                    
+                    body_pos = list(map(float, body.get('pos', '0 0 0').split()))
+                    body_euler = list(map(float, body.get('euler', '0 0 0').split())) if 'euler' in body.attrib else [0, 0, 0]
+                    
+                    # 创建组对象
+                    group = GeometryGroup(
+                        name=body_name,
+                        position=body_pos,
+                        rotation=body_euler
+                    )
+                    body_groups[body_name] = group
+                    
+                    # 添加所有geom子对象
+                    for geom in body.findall("geom"):
+                        geo_type = geom.get('type', 'box')
+                        geom_name = geom.get('name', f"{body_name}_geom")
+                        
+                        # 解析尺寸
+                        size_str = geom.get('size', '1 1 1')
+                        size = list(map(float, size_str.split()))
+                        
+                        # 调整尺寸格式，参考导出逻辑
+                        if geo_type == 'sphere':
+                            if len(size) == 1:
+                                size = [size[0], size[0], size[0]]  # 球体使用相同的三个半径
+                        elif geo_type == 'ellipsoid':
+                            # 确保有三个尺寸
+                            if len(size) < 3:
+                                size.extend([size[0]] * (3 - len(size)))
+                        elif geo_type in ['capsule', 'cylinder']:
+                            # 确保有两个尺寸
+                            if len(size) < 2:
+                                size.append(1.0)  # 默认高度
+                            if len(size) < 3:
+                                size.append(0)  # 补充第三个参数
+                        
+                        # 解析位置（相对于body的局部坐标）
+                        local_pos = list(map(float, geom.get('pos', '0 0 0').split())) if 'pos' in geom.attrib else [0, 0, 0]
+                        
+                        # 解析颜色
+                        rgba = geom.get('rgba', '0.8 0.8 0.8 1.0').split()
+                        color = list(map(float, rgba))
+                        
+                        # 创建几何体
+                        geo = Geometry(
+                            geo_type=geo_type,
+                            name=geom_name,
+                            position=local_pos,
+                            size=size,
+                            parent=group
+                        )
+                        
+                        # 设置材质颜色
+                        if hasattr(geo, "material"):
+                            geo.material.color = color
+                        
+                        # 添加到组中
+                        group.add_child(geo)
+                
+                # 建立组之间的层级关系
+                for body_name, parent_name in parent_map.items():
+                    if body_name in body_groups and parent_name in body_groups:
+                        child_group = body_groups[body_name]
+                        parent_group = body_groups[parent_name]
+                        
+                        # 避免重复添加
+                        if child_group not in parent_group.children:
+                            parent_group.add_child(child_group)
+                
+                # 收集所有顶层组（没有父组的组）
+                for name, group in body_groups.items():
+                    if name not in parent_map:  # 没有父组
+                        geometries.append(group)
+                
+                # 如果没有找到任何body，处理worldbody下的直接geom
+                if not geometries:
+                    world_body = root.find(".//worldbody")
+                    if world_body is not None:
+                        for geom in world_body.findall("geom"):
+                            # 排除参考平面和坐标轴
+                            geom_name = geom.get('name', '')
+                            if geom_name in ["ground", "x_axis", "y_axis", "z_axis"]:
+                                continue
+                            
+                            geo_type = geom.get('type', 'box')
+                            pos = list(map(float, geom.get('pos', '0 0 0').split()))
+                            size_str = geom.get('size', '1 1 1')
+                            size = list(map(float, size_str.split()))
+                            
+                            # 根据类型调整尺寸格式，同上...
+                            
+                            # 创建独立几何体
+                            geo = Geometry(
+                                geo_type=geo_type,
+                                name=geom_name or "Object",
+                                position=pos,
+                                size=size
+                            )
+                            
+                            geometries.append(geo)
+            
+            else:
+                # 其他可能的XML格式，尝试基本解析
+                # 直接处理根节点下的geometry元素
+                for geom in root.findall(".//geometry"):
+                    name = geom.get("name", "Object")
+                    geo_type = geom.get("type", "box")
+                    
+                    # 解析位置
+                    pos_elem = geom.find("position")
+                    position = [0, 0, 0]
+                    if pos_elem is not None:
+                        position = [
+                            float(pos_elem.get("x", 0)),
+                            float(pos_elem.get("y", 0)),
+                            float(pos_elem.get("z", 0))
+                        ]
+                    
+                    # 解析尺寸
+                    size_elem = geom.find("size")
+                    size = [1, 1, 1]
+                    if size_elem is not None:
+                        size = [
+                            float(size_elem.get("x", 1)),
+                            float(size_elem.get("y", 1)),
+                            float(size_elem.get("z", 1))
+                        ]
+                    
+                    # 解析旋转
+                    rot_elem = geom.find("rotation")
+                    rotation = [0, 0, 0]
+                    if rot_elem is not None:
+                        rotation = [
+                            float(rot_elem.get("x", 0)),
+                            float(rot_elem.get("y", 0)),
+                            float(rot_elem.get("z", 0))
+                        ]
+                    
+                    # 创建几何体
+                    geo = Geometry(
                         geo_type=geo_type,
-                        name=body.get('name', 'Unnamed'),
-                        position=pos,
-                        size=size
-                    ))
+                        name=name,
+                        position=position,
+                        size=size,
+                        rotation=rotation
+                    )
+                    
+                    # 处理材质
+                    material_elem = geom.find("material")
+                    if material_elem is not None:
+                        color_attr = material_elem.get("color")
+                        if color_attr:
+                            color = list(map(float, color_attr.split()))
+                            if len(color) >= 3:
+                                geo.material.color = color
+                    
+                    geometries.append(geo)
+                
+                # 尝试处理group元素
+                for group_elem in root.findall(".//group"):
+                    name = group_elem.get("name", "Group")
+                    
+                    # 处理组和子对象...（类似于enhanced_format的处理逻辑）
+                    # ...
+            
             return geometries
         except Exception as e:
+            import traceback
+            print(f"文件解析失败: {str(e)}")
+            print(traceback.format_exc())
             QMessageBox.critical(None, "错误", f"文件解析失败: {str(e)}")
             return []
     
