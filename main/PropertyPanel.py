@@ -645,7 +645,7 @@ class PropertyPanel(QDockWidget):
         self.gl_widget.update()
 
     def _save_current_state(self):
-        """保存当前场景的所有几何体状态"""
+        """保存当前场景的所有几何体状态，不包括摄像机状态"""
         if not self.gl_widget.geometries:
             QMessageBox.warning(self, "保存失败", "当前场景中没有几何体对象，无法保存状态。")
             return
@@ -657,31 +657,10 @@ class PropertyPanel(QDockWidget):
             # 创建几何体状态副本
             geometries_copy = self._serialize_geometries(self.gl_widget.geometries)
             
-            # 保存摄像机状态
-            camera_config = {}
-            if hasattr(self.gl_widget, 'get_camera_config'):
-                # 检查方法是否需要参数
-                import inspect
-                sig = inspect.signature(self.gl_widget.get_camera_config)
-                if len(sig.parameters) == 0:
-                    camera_config = self.gl_widget.get_camera_config()
-                else:
-                    print("相机配置方法需要参数，跳过获取相机状态")
-            else:
-                # 手动构建相机配置
-                for attr in ['camera_position', 'camera_target', 'camera_up', 'fov', 'near_plane', 'far_plane']:
-                    if hasattr(self.gl_widget, attr):
-                        value = getattr(self.gl_widget, attr)
-                        if isinstance(value, np.ndarray):
-                            camera_config[attr] = value.tolist()
-                        else:
-                            camera_config[attr] = value
-            
-            # 创建完整状态字典
+            # 创建状态字典 - 不包含摄像机配置
             state = {
                 'timestamp': timestamp,
-                'geometries': geometries_copy,
-                'camera': camera_config
+                'geometries': geometries_copy
             }
             
             # 添加到状态列表
@@ -706,7 +685,7 @@ class PropertyPanel(QDockWidget):
             QMessageBox.critical(self, "保存失败", error_message)
         
     def _load_selected_state(self):
-        """加载选中的状态"""
+        """加载选中的状态，只恢复几何体，不涉及摄像机状态"""
         selected_items = self.state_list.selectedItems()
         if not selected_items:
             QMessageBox.warning(self, "加载失败", "请先选择一个状态。")
@@ -740,27 +719,6 @@ class PropertyPanel(QDockWidget):
             geometries = self._deserialize_geometries(selected_state['geometries'])
             for geo in geometries:
                 self.gl_widget.add_geometry(geo)
-            
-            # 恢复摄像机状态（检查方法是否存在并且能接受参数）
-            if 'camera' in selected_state:
-                camera_config = selected_state['camera']
-                # 检查方法是否存在
-                if hasattr(self.gl_widget, 'update_camera_config'):
-                    # 检查方法是否能接受参数
-                    import inspect
-                    sig = inspect.signature(self.gl_widget.update_camera_config)
-                    if len(sig.parameters) > 0:
-                        # 方法能接受参数
-                        self.gl_widget.update_camera_config(camera_config)
-                    else:
-                        # 方法不接受参数，但我们可以手动设置属性
-                        print("相机配置方法不接受参数，尝试直接设置属性...")
-                        for key, value in camera_config.items():
-                            if hasattr(self.gl_widget, key):
-                                try:
-                                    setattr(self.gl_widget, key, value)
-                                except:
-                                    print(f"无法设置相机属性: {key}")
             
             # 更新视图
             self.gl_widget.update()
@@ -982,18 +940,11 @@ class PropertyPanel(QDockWidget):
                 with open(save_path, 'r', encoding='utf-8') as f:
                     self.states = json.load(f)
                     
-                # 将旧版本的状态数据转换为新格式
+                # 确保所有状态都有必要的键，即使是旧版本的状态数据
                 for state in self.states:
-                    if 'camera' not in state:
-                        # 添加默认摄像机配置
-                        state['camera'] = {
-                            'position': [5, 5, 5],
-                            'target': [0, 0, 0],
-                            'up': [0, 1, 0],
-                            'fov': 45.0,
-                            'near': 0.1,
-                            'far': 1000.0
-                        }
+                    # 检查是否包含几何体数据
+                    if 'geometries' not in state:
+                        state['geometries'] = []
                         
                 # 限制状态数量
                 while len(self.states) > self.max_states:
