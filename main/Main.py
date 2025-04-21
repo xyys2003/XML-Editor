@@ -135,12 +135,10 @@ class MainWindow(QMainWindow):
         
         save_action = QAction("保存", self)
         save_action.setShortcut(QKeySequence.Save)
-        save_action.triggered.connect(self.save_file)
+        save_action.triggered.connect(self.export_to_mujoco)
         file_menu.addAction(save_action)
 
         # 添加导出到Mujoco XML选项
-        export_mujoco_action = file_menu.addAction("导出为Mujoco XML...")
-        export_mujoco_action.triggered.connect(self.export_to_mujoco)
 
     def export_to_mujoco(self):
         """导出场景为Mujoco XML格式"""

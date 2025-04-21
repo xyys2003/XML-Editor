@@ -364,133 +364,17 @@ class XMLParser:
     @staticmethod
     def save(filename, geometries):
         """
-        使用lxml将几何体信息保存为格式化的XML文件
+        保存几何体到XML文件，使用增强格式
+        
+        Args:
+            filename: 保存的文件路径
+            geometries: 要保存的几何体列表或对象树
+        
+        Returns:
+            保存是否成功
         """
-        try:
-            from lxml import etree as ET
-            
-            root = ET.Element("scene")
-            
-            # 保存几何体信息
-            for geo in geometries:
-                if hasattr(geo, "children"):  # 检查是否是组
-                    continue  # 组会在递归中处理
-                
-                # 创建几何体元素
-                geom = ET.SubElement(root, "geometry")
-                geom.set("name", geo.name)
-                geom.set("type", geo.type)
-                
-                # 添加位置信息
-                position = ET.SubElement(geom, "position")
-                position.set("x", str(geo.position[0]))
-                position.set("y", str(geo.position[1]))
-                position.set("z", str(geo.position[2]))
-                
-                # 添加尺寸信息
-                size = ET.SubElement(geom, "size")
-                size.set("x", str(geo.size[0]))
-                size.set("y", str(geo.size[1]))
-                size.set("z", str(geo.size[2]))
-                
-                # 添加旋转信息
-                rotation = ET.SubElement(geom, "rotation")
-                rotation.set("x", str(geo.rotation[0]))
-                rotation.set("y", str(geo.rotation[1]))
-                rotation.set("z", str(geo.rotation[2]))
-                
-                # 添加材质信息
-                if hasattr(geo, "material"):
-                    material = ET.SubElement(geom, "material")
-                    color = geo.material.color
-                    if len(color) == 3:
-                        material.set("color", f"{color[0]} {color[1]} {color[2]} 1.0")
-                    else:
-                        material.set("color", f"{color[0]} {color[1]} {color[2]} {color[3]}")
-            
-            # 递归保存组和子对象
-            def save_group(group, parent_elem):
-                # 创建组元素
-                group_elem = ET.SubElement(parent_elem, "group")
-                group_elem.set("name", group.name)
-                
-                # 添加位置信息
-                position = ET.SubElement(group_elem, "position")
-                position.set("x", str(group.position[0]))
-                position.set("y", str(group.position[1]))
-                position.set("z", str(group.position[2]))
-                
-                # 添加旋转信息
-                rotation = ET.SubElement(group_elem, "rotation")
-                rotation.set("x", str(group.rotation[0]))
-                rotation.set("y", str(group.rotation[1]))
-                rotation.set("z", str(group.rotation[2]))
-                
-                # 保存子对象
-                children_elem = ET.SubElement(group_elem, "children")
-                for child in group.children:
-                    if hasattr(child, "children"):  # 子组
-                        save_group(child, children_elem)
-                    else:  # 几何体
-                        # 创建几何体元素
-                        geom = ET.SubElement(children_elem, "geometry")
-                        geom.set("name", child.name)
-                        geom.set("type", child.type)
-                        
-                        # 添加位置信息
-                        position = ET.SubElement(geom, "position")
-                        position.set("x", str(child.position[0]))
-                        position.set("y", str(child.position[1]))
-                        position.set("z", str(child.position[2]))
-                        
-                        # 添加尺寸信息
-                        size = ET.SubElement(geom, "size")
-                        size.set("x", str(child.size[0]))
-                        size.set("y", str(child.size[1]))
-                        size.set("z", str(child.size[2]))
-                        
-                        # 添加旋转信息
-                        rotation = ET.SubElement(geom, "rotation")
-                        rotation.set("x", str(child.rotation[0]))
-                        rotation.set("y", str(child.rotation[1]))
-                        rotation.set("z", str(child.rotation[2]))
-                        
-                        # 添加材质信息
-                        if hasattr(child, "material"):
-                            material = ET.SubElement(geom, "material")
-                            color = child.material.color
-                            if len(color) == 3:
-                                material.set("color", f"{color[0]} {color[1]} {color[2]} 1.0")
-                            else:
-                                material.set("color", f"{color[0]} {color[1]} {color[2]} {color[3]}")
-            
-            # 保存所有顶级组
-            for obj in geometries:
-                if hasattr(obj, "children"):  # 是组
-                    save_group(obj, root)
-            
-            # 创建整洁格式化的XML字符串
-            xml_string = ET.tostring(root, encoding='utf-8', pretty_print=True, xml_declaration=True)
-            
-            # 写入文件
-            with open(filename, 'wb') as f:
-                f.write(xml_string)
-            
-            return True
-        
-        except ImportError:
-            # 如果无法导入lxml，给出提示
-            print("请安装lxml库以获得更好的XML格式化：pip install lxml")
-            
-            # 尝试使用标准库（不会有很好的格式化）
-            import xml.etree.ElementTree as ET_STD
-            # 使用标准库的实现...
-            # ...
-            return False
-        
-        except Exception as e:
-            print(f"保存XML过程中发生错误：{str(e)}")
-            return False
+        # 直接调用增强格式的XML导出
+        return XMLParser.export_enhanced_xml(filename, geometries, include_metadata=True)
     
     @staticmethod
     def export_enhanced_xml(filename, geometries, include_metadata=False):

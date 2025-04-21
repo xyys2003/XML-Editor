@@ -562,14 +562,20 @@ class HierarchyTree(QDockWidget):
     
     def _delete_selected(self):
         """删除当前选中的对象"""
-        selected_items = self.tree_widget.selectedItems()
-        if not selected_items:
-            return
+        # 检查是否是多选状态
+        if len(self.gl_widget.selected_geos) > 1:
+            # 多选状态下，使用 _execute_multi_selection_action 执行删除
+            self._execute_multi_selection_action(self._delete_object)
+        else:
+            # 单选状态下的原有逻辑
+            selected_items = self.tree_widget.selectedItems()
+            if not selected_items:
+                return
             
-        item = selected_items[0]
-        obj = self.item_to_obj.get(item)
-        if obj:
-            self._delete_object(obj)
+            item = selected_items[0]
+            obj = self.item_to_obj.get(id(item))
+            if obj:
+                self._delete_object(obj)
 
     def _handle_copy_shortcut(self):
         """处理复制快捷键"""

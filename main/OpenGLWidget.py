@@ -277,37 +277,35 @@ class OpenGLWidget(QOpenGLWidget):
             glutSolidCylinder(radius, height, 32, 32)
             
         elif geo.type == GeometryType.CAPSULE:
-            # 绘制胶囊体
+            # 绘制胶囊体 - 符合MuJoCo标准，以Z轴为主轴，中心位于圆柱体中心
             radius = geo.size[0]
             half_height = geo.size[1]
             
             # 创建二次曲面对象
             quad = gluNewQuadric()
             
-            # 绘制圆柱体部分
+            # 绘制圆柱体部分（沿Z轴，中心位于原点）
             glPushMatrix()
-            glTranslatef(0, 0, -half_height)  # 移到圆柱体底部
-            glRotatef(90, 1, 0, 0)  # 旋转使主轴沿Z方向
+            glTranslatef(0, 0, -half_height)  # 移动到圆柱体底部
             gluCylinder(quad, radius, radius, 2 * half_height, 32, 32)
             glPopMatrix()
             
-            # 绘制底部半球
+            # 绘制底部半球（位于圆柱体底部）
             glPushMatrix()
-            glTranslatef(0, 0, -half_height)
-            glRotatef(-90, 1, 0, 0)
+            glTranslatef(0, 0, -half_height)  # 移动到圆柱体底部
+            glRotatef(180, 1, 0, 0)  # 旋转使半球朝向-Z方向
             gluSphere(quad, radius, 32, 32)
             glPopMatrix()
             
-            # 绘制顶部半球
+            # 绘制顶部半球（位于圆柱体顶部）
             glPushMatrix()
-            glTranslatef(0, 0, half_height)
-            glRotatef(90, 1, 0, 0)
+            glTranslatef(0, 0, half_height)  # 移动到圆柱体顶部
             gluSphere(quad, radius, 32, 32)
             glPopMatrix()
             
             # 删除二次曲面对象
             gluDeleteQuadric(quad)
-            
+        
         elif geo.type == GeometryType.PLANE:
             # 绘制平面 - 使用调整后的尺寸
             glScalef(mujoco_size[0], mujoco_size[1], mujoco_size[2])
@@ -2680,17 +2678,22 @@ class OpenGLWidget(QOpenGLWidget):
                 geometries=[geo for _, geo in self.rotation_gizmo_geometries]
             )
             
-            # 为几何体添加绝对位置信息，因为它们当前是相对于gizmo_pos的
+            # 为几何体临时增大碰撞范围
+            original_sizes = {}
             for axis_name, geo in self.rotation_gizmo_geometries:
+                # 保存原始大小
+                original_sizes[axis_name] = geo.size.copy()
+                # 临时将大小增加到1.5倍以便更容易选择
+                geo.size = geo.size * 1.5
                 # 暂时更新位置到世界坐标
-                original_pos = geo.position.copy()
                 geo.position = self.rotation_gizmo_pos + geo.position
             
             # 投射射线检测碰撞
             result = temp_raycaster.cast_ray((mouse_pos.x(), mouse_pos.y()))
             
-            # 恢复原始位置
+            # 恢复原始大小和位置
             for axis_name, geo in self.rotation_gizmo_geometries:
+                geo.size = original_sizes[axis_name]
                 geo.position = geo.position - self.rotation_gizmo_pos
             
             if result and result.geometry:
