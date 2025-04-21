@@ -159,14 +159,14 @@ class MainWindow(QMainWindow):
             self, "打开场景文件", "", "XML Files (*.xml)")
         if filename:
             self.gl_widget.geometries = XMLParser.load(filename)
+            self.gl_widget.raycaster = GeometryRaycaster(
+                self.gl_widget.get_camera_config(), 
+                self.gl_widget.geometries
+            )
             self.hierarchy_tree.refresh()
             self.gl_widget.update()
     
-    def save_file(self):
-        filename, _ = QFileDialog.getSaveFileName(
-            self, "保存场景文件", "", "XML Files (*.xml)")
-        if filename:
-            XMLParser.save(filename, self.gl_widget.geometries)
+
 
 
 

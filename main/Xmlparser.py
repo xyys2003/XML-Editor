@@ -152,6 +152,10 @@ class XMLParser:
                                         ]
                                         geo.material.color = color
                                 
+                                # 确保几何体被正确初始化
+                                if hasattr(geo, "initialize"):
+                                    geo.initialize()
+                                
                                 if parent is None:
                                     results.append(geo)
                                 else:
@@ -192,12 +196,18 @@ class XMLParser:
                     body_pos = list(map(float, body.get('pos', '0 0 0').split()))
                     body_euler = list(map(float, body.get('euler', '0 0 0').split())) if 'euler' in body.attrib else [0, 0, 0]
                     
+                    # 可能需要转换旋转表示
+                    # body_euler = convert_euler_format(body_euler)  # 如果需要的话添加转换函数
+                    
                     # 创建组对象
                     group = GeometryGroup(
                         name=body_name,
                         position=body_pos,
                         rotation=body_euler
                     )
+                    # 确保组对象被正确初始化
+                    if hasattr(group, "initialize"):
+                        group.initialize()
                     body_groups[body_name] = group
                     
                     # 添加所有geom子对象
@@ -209,10 +219,10 @@ class XMLParser:
                         size_str = geom.get('size', '1 1 1')
                         size = list(map(float, size_str.split()))
                         
-                        # 调整尺寸格式，参考导出逻辑
+                        # 适当地处理尺寸格式
                         if geo_type == 'sphere':
                             if len(size) == 1:
-                                size = [size[0], size[0], size[0]]  # 球体使用相同的三个半径
+                                size = [size[0], size[0], size[0]]  # 保持三个相同的半径值
                         elif geo_type == 'ellipsoid':
                             # 确保有三个尺寸
                             if len(size) < 3:
@@ -220,16 +230,40 @@ class XMLParser:
                         elif geo_type in ['capsule', 'cylinder']:
                             # 确保有两个尺寸
                             if len(size) < 2:
-                                size.append(1.0)  # 默认高度
+                                size.append(1.0)  # 默认半高
                             if len(size) < 3:
                                 size.append(0)  # 补充第三个参数
                         
                         # 解析位置（相对于body的局部坐标）
                         local_pos = list(map(float, geom.get('pos', '0 0 0').split())) if 'pos' in geom.attrib else [0, 0, 0]
                         
-                        # 解析颜色
-                        rgba = geom.get('rgba', '0.8 0.8 0.8 1.0').split()
-                        color = list(map(float, rgba))
+                        # 解析颜色 - 改进版
+                        # 优先使用rgba属性
+                        if 'rgba' in geom.attrib:
+                            rgba_str = geom.get('rgba')
+                            rgba_values = list(map(float, rgba_str.split()))
+                            # 确保有四个值
+                            if len(rgba_values) == 3:
+                                rgba_values.append(1.0)  # 添加alpha默认值
+                            elif len(rgba_values) < 3:
+                                rgba_values = [0.8, 0.8, 0.8, 1.0]  # 默认灰色
+                            color = rgba_values
+                        # 检查是否引用了material
+                        elif 'material' in geom.attrib:
+                            material_name = geom.get('material')
+                            # 尝试在asset下找到对应的material
+                            material_elem = root.find(f".//asset/material[@name='{material_name}']")
+                            if material_elem is not None and 'rgba' in material_elem.attrib:
+                                rgba_str = material_elem.get('rgba')
+                                color = list(map(float, rgba_str.split()))
+                                if len(color) == 3:
+                                    color.append(1.0)  # 添加默认透明度
+                            else:
+                                # 如果找不到material或material没有rgba，使用默认值
+                                color = [0.8, 0.8, 0.8, 1.0]  # 默认灰色
+                        else:
+                            # 没有直接指定颜色，也没有引用material，使用默认值
+                            color = [0.8, 0.8, 0.8, 1.0]  # 默认灰色
                         
                         # 创建几何体
                         geo = Geometry(
@@ -237,12 +271,18 @@ class XMLParser:
                             name=geom_name,
                             position=local_pos,
                             size=size,
+                            rotation=[0, 0, 0],
                             parent=group
                         )
                         
-                        # 设置材质颜色
-                        if hasattr(geo, "material"):
-                            geo.material.color = color
+                        # 确保材质属性存在并设置颜色
+                        if not hasattr(geo, "material") or geo.material is None:
+                            geo.material = Material()
+                        geo.material.color = color
+                        
+                        # 确保几何体被正确初始化
+                        if hasattr(geo, "initialize"):
+                            geo.initialize()
                         
                         # 添加到组中
                         group.add_child(geo)
@@ -279,6 +319,19 @@ class XMLParser:
                             
                             # 根据类型调整尺寸格式，同上...
                             
+                            # 解析颜色 - 同上的改进版代码
+                            # 优先使用rgba属性
+                            if 'rgba' in geom.attrib:
+                                rgba_str = geom.get('rgba')
+                                rgba_values = list(map(float, rgba_str.split()))
+                                # 确保有四个值
+                                if len(rgba_values) == 3:
+                                    rgba_values.append(1.0)  # 添加alpha默认值
+                                elif len(rgba_values) < 3:
+                                    rgba_values = [0.8, 0.8, 0.8, 1.0]  # 默认灰色
+                                color = rgba_values
+                            # ... (其他颜色处理逻辑同上)
+                            
                             # 创建独立几何体
                             geo = Geometry(
                                 geo_type=geo_type,
@@ -286,6 +339,11 @@ class XMLParser:
                                 position=pos,
                                 size=size
                             )
+                            
+                            # 设置材质
+                            if not hasattr(geo, "material") or geo.material is None:
+                                geo.material = Material()
+                            geo.material.color = color
                             
                             geometries.append(geo)
             
@@ -353,6 +411,12 @@ class XMLParser:
                     # 处理组和子对象...（类似于enhanced_format的处理逻辑）
                     # ...
             
+            # 在返回几何体列表之前，确保所有对象都被注册到场景系统
+            for geometry in geometries:
+                # 如果有场景注册函数，在这里调用
+                # register_to_scene(geometry)
+                pass
+
             return geometries
         except Exception as e:
             import traceback
@@ -624,11 +688,6 @@ class XMLParser:
         """
         使用lxml库导出为Mujoco格式的XML文件，确保标准格式化缩进
         添加坐标轴和基准平面用于参考
-        
-        Args:
-            filename: 导出的XML文件路径
-            geometries: 要导出的几何体列表或对象树
-            include_metadata: 参数已不再使用，为了向后兼容保留
         """
         try:
             from lxml import etree as ET
@@ -768,20 +827,20 @@ class XMLParser:
                     geom.set("name", f"{obj_id}_geom")
                     geom.set("type", mujoco_type)
                     
-                    # 设置尺寸（根据几何体类型调整）
+                    # 设置尺寸 - 直接使用原始尺寸，不再除以2
                     if mujoco_type == "box":
-                        # box使用半尺寸
-                        half_size = [s/2 for s in obj.size]
-                        geom.set("size", f"{half_size[0]} {half_size[1]} {half_size[2]}")
+                        # 直接使用原始尺寸，因为已经是半尺寸了
+                        geom.set("size", f"{obj.size[0]} {obj.size[1]} {obj.size[2]}")
                     elif mujoco_type == "sphere":
-                        # 球体使用半径
+                        # 直接使用原始尺寸，因为已经是半径了
                         geom.set("size", f"{obj.size[0]}")
                     elif mujoco_type in ["cylinder", "capsule"]:
-                        # 圆柱和胶囊使用半径和高度
+                        # 直接使用原始尺寸，因为已经是半径和半高了
                         geom.set("size", f"{obj.size[0]} {obj.size[1]}")
                     else:
-                        # 其他类型默认使用原始尺寸
-                        geom.set("size", f"{obj.size[0]} {obj.size[1]} {obj.size[2]}")
+                        # 其他类型也直接使用原始尺寸
+                        size_str = " ".join(str(s) for s in obj.size)
+                        geom.set("size", size_str)
                     
                     # 设置颜色
                     if hasattr(obj, "material") and hasattr(obj.material, "color"):

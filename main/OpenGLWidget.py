@@ -239,20 +239,23 @@ class OpenGLWidget(QOpenGLWidget):
         # 设置颜色和材质
         if hasattr(geo, 'material') and hasattr(geo.material, 'color') and len(geo.material.color) >= 3:
             r, g, b = geo.material.color[:3]
-        else:
+            # 如果颜色包含透明度，则使用它，否则使用参数alpha
+            a = geo.material.color[3] if len(geo.material.color) > 3 else alpha
+        else:  
             r, g, b = 0.7, 0.7, 0.7  # 默认灰色
+            a = alpha
         
         # 设置颜色和透明度
-        glColor4f(r, g, b, alpha)
+        glColor4f(r, g, b, a)
         
         # 应用材质属性
         if hasattr(geo, 'material'):
-            glMaterialfv(GL_FRONT, GL_DIFFUSE, [r, g, b, alpha])
+            glMaterialfv(GL_FRONT, GL_DIFFUSE, [r, g, b, a])
             glMaterialfv(GL_FRONT, GL_SPECULAR, geo.material.specular)
             glMaterialf(GL_FRONT, GL_SHININESS, geo.material.shininess)
         
         # Mujoco的size是半长半宽半高，绘制时需要乘以2
-        mujoco_size = geo.size * 2.0  # 调整尺寸
+        mujoco_size = geo.size   *2# 调整尺寸
         
         # 根据几何体类型绘制
         if geo.type == GeometryType.BOX:
