@@ -176,6 +176,23 @@ class Geometry(QObject):
         # 正确的乘法顺序: T * R * S
         self.transform_matrix = translation_matrix @ rotation_matrix @ scale_matrix
 
+    def update_transform_matrix(self):
+        """更新变换矩阵，考虑位置、旋转和父节点"""
+        # 创建基本变换矩阵
+        self.transform_matrix = np.eye(4)
+        
+        # 设置旋转部分（使用角度到矩阵的转换）
+        rad_angles = np.radians(self.rotation)
+        rot_matrix = euler_angles_to_matrix(rad_angles)
+        self.transform_matrix[:3, :3] = rot_matrix[:3, :3]
+        
+        # 设置平移部分
+        self.transform_matrix[:3, 3] = self.position
+        
+        # 如果有父节点，需要考虑父节点的变换
+        if self.parent is not None and hasattr(self.parent, 'transform_matrix'):
+            self.transform_matrix = self.parent.transform_matrix @ self.transform_matrix
+
 class GeometryGroup(QObject):
     """几何体分组/目录类，用于创建层级结构"""
     changed = pyqtSignal()
@@ -291,6 +308,28 @@ class GeometryGroup(QObject):
         """获取世界坐标系中的位置"""
         world_matrix = self.get_world_transform()
         return world_matrix[:3, 3]
+
+    def update_transform_matrix(self):
+        """更新变换矩阵，考虑位置、旋转和父节点"""
+        # 创建基本变换矩阵
+        self.transform_matrix = np.eye(4)
+        
+        # 设置旋转部分（使用角度到矩阵的转换）
+        rad_angles = np.radians(self.rotation)
+        rot_matrix = euler_angles_to_matrix(rad_angles)
+        self.transform_matrix[:3, :3] = rot_matrix[:3, :3]
+        
+        # 设置平移部分
+        self.transform_matrix[:3, 3] = self.position
+        
+        # 如果有父节点，需要考虑父节点的变换
+        if self.parent is not None and hasattr(self.parent, 'transform_matrix'):
+            self.transform_matrix = self.parent.transform_matrix @ self.transform_matrix
+        
+        # 更新所有子节点的变换矩阵
+        for child in self.children:
+            if hasattr(child, 'update_transform_matrix'):
+                child.update_transform_matrix()
 
 class TriangleGeometry(Geometry):
     """三角形几何体类"""

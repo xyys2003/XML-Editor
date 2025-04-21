@@ -224,6 +224,9 @@ class OpenGLWidget(QOpenGLWidget):
         if not geo:  # 增加空值保护
             return
         
+        # 禁用光照
+        glDisable(GL_LIGHTING)
+        
         glPushMatrix()
         
         # 如果有父级变换矩阵，先应用它

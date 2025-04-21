@@ -158,14 +158,39 @@ class MainWindow(QMainWindow):
         filename, _ = QFileDialog.getOpenFileName(
             self, "打开场景文件", "", "XML Files (*.xml)")
         if filename:
-            self.gl_widget.geometries = XMLParser.load(filename)
+            # 导入几何体
+            imported_geometries = XMLParser.load(filename)
+            
+            # 更新几何体列表
+            self.gl_widget.geometries = imported_geometries
+            
+            # 确保所有几何体的变换矩阵被更新
+            self._update_transforms_recursive(self.gl_widget.geometries)
+            
+            # 更新射线投射器
             self.gl_widget.raycaster = GeometryRaycaster(
                 self.gl_widget.get_camera_config(), 
                 self.gl_widget.geometries
             )
+            
+            # 刷新UI
             self.hierarchy_tree.refresh()
             self.gl_widget.update()
-    
+
+    def _update_transforms_recursive(self, objects):
+        """递归更新所有几何体的变换矩阵"""
+        if isinstance(objects, list):
+            for obj in objects:
+                self._update_transforms_recursive(obj)
+        else:
+            # 更新当前对象的变换矩阵
+            if hasattr(objects, "update_transform_matrix"):
+                objects.update_transform_matrix()
+            
+            # 如果是组，递归更新子对象
+            if hasattr(objects, "children") and objects.children:
+                for child in objects.children:
+                    self._update_transforms_recursive(child)
 
 
 

@@ -81,6 +81,10 @@ class XMLParser:
                                 # 创建组对象
                                 group = GeometryGroup(name=name, position=position, rotation=rotation, parent=parent)
                                 
+                                # 确保变换矩阵被更新
+                                if hasattr(group, "update_transform_matrix"):
+                                    group.update_transform_matrix()
+                                
                                 # 处理子节点
                                 children_elem = child.find("Children")
                                 if children_elem is not None:
@@ -88,6 +92,10 @@ class XMLParser:
                                     for child_obj in child_objects:
                                         if parent is None:  # 顶层对象
                                             group.add_child(child_obj)
+                                
+                                # 确保initialize被调用（如果存在）
+                                if hasattr(group, "initialize"):
+                                    group.initialize()
                                 
                                 if parent is None:
                                     results.append(group)
@@ -138,6 +146,10 @@ class XMLParser:
                                     rotation=rotation,
                                     parent=parent
                                 )
+                                
+                                # 确保变换矩阵被更新
+                                if hasattr(geo, "update_transform_matrix"):
+                                    geo.update_transform_matrix()
                                 
                                 # 处理材质
                                 material_elem = child.find("Material")
@@ -411,11 +423,23 @@ class XMLParser:
                     # 处理组和子对象...（类似于enhanced_format的处理逻辑）
                     # ...
             
-            # 在返回几何体列表之前，确保所有对象都被注册到场景系统
-            for geometry in geometries:
-                # 如果有场景注册函数，在这里调用
-                # register_to_scene(geometry)
-                pass
+            # 在返回几何体列表之前，确保所有对象的变换矩阵都被正确更新
+            def update_transforms_recursive(obj):
+                if isinstance(obj, list):
+                    for item in obj:
+                        update_transforms_recursive(item)
+                else:
+                    # 更新当前对象的变换矩阵
+                    if hasattr(obj, "update_transform_matrix"):
+                        obj.update_transform_matrix()
+                    
+                    # 如果是组，递归更新子对象
+                    if hasattr(obj, "children") and obj.children:
+                        for child in obj.children:
+                            update_transforms_recursive(child)
+
+            # 递归更新所有对象的变换矩阵
+            update_transforms_recursive(geometries)
 
             return geometries
         except Exception as e:

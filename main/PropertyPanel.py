@@ -217,6 +217,10 @@ class PropertyPanel(QDockWidget):
                 color_layout.addWidget(self.color_preview)
                 color_layout.addWidget(self.color_button)
                 
+                # 添加RGBA控制
+                rgba_widget = self._create_rgba_spinners(geo.material.color)
+                self.form_layout.addRow("RGBA:", rgba_widget)
+                
                 self.form_layout.addRow("颜色:", color_widget)
                 
                 # 添加颜色预设面板
@@ -388,6 +392,16 @@ class PropertyPanel(QDockWidget):
                 self.color_preview.mousePressEvent = lambda event: self._pick_color_preview()  # 修改为预览方法
                 self.color_preview.setCursor(Qt.PointingHandCursor)
                 
+            # RGBA控制spinners
+            if hasattr(self, 'rgba_spinners'):
+                for spinner in self.rgba_spinners:
+                    if spinner is not None:
+                        try:
+                            spinner.valueChanged.disconnect()
+                        except:
+                            pass
+                        spinner.valueChanged.connect(self._on_rgba_changed)
+                    
         except Exception as e:
             print(f"连接信号时出错: {str(e)}")
             import traceback
@@ -583,41 +597,60 @@ class PropertyPanel(QDockWidget):
         initial_color = QColor(
             int(current_color[0] * 255),
             int(current_color[1] * 255),
-            int(current_color[2] * 255)
+            int(current_color[2] * 255),
+            int(current_color[3] * 255) if len(current_color) > 3 else 255
         )
         
         # 打开颜色选择器
-        color = QColorDialog.getColor(initial=initial_color)
+        color = QColorDialog.getColor(initial=initial_color, options=QColorDialog.ShowAlphaChannel)
         if not color.isValid():
             return
         
         # 仅更新预览，不应用到几何体
         if hasattr(self, 'color_preview') and self.color_preview is not None:
             self.color_preview.setStyleSheet(
-                f"background-color: {color.name()}; border: 1px solid #888;")
+                f"background-color: {color.name(QColor.HexArgb)}; border: 1px solid #888;")
         
         # 保存颜色值到临时数据
-        self.temp_color = [color.redF(), color.greenF(), color.blueF(), 1.0]
+        new_color = [color.redF(), color.greenF(), color.blueF(), color.alphaF()]
+        self.temp_color = new_color
+        
+        # 更新RGBA spinners
+        if hasattr(self, 'rgba_spinners') and len(self.rgba_spinners) == 4:
+            for i, val in enumerate(new_color):
+                with QSignalBlocker(self.rgba_spinners[i]):
+                    self.rgba_spinners[i].setValue(val)
 
     def _apply_preset_color(self, color_rgb):
         """应用预设颜色到预览，但不立即应用到几何体"""
         if not self.current_geo or not hasattr(self.current_geo, 'material'):
             return
         
+        # 创建完整的RGBA颜色（保留现有Alpha值）
+        alpha = self.temp_color[3] if hasattr(self, 'temp_color') and len(self.temp_color) > 3 else 1.0
+        new_color = [color_rgb[0], color_rgb[1], color_rgb[2], alpha]
+        
         # 创建QColor对象
         qcolor = QColor(
-            int(color_rgb[0] * 255),
-            int(color_rgb[1] * 255),
-            int(color_rgb[2] * 255)
+            int(new_color[0] * 255),
+            int(new_color[1] * 255),
+            int(new_color[2] * 255),
+            int(new_color[3] * 255)
         )
         
         # 仅更新预览
         if hasattr(self, 'color_preview') and self.color_preview is not None:
             self.color_preview.setStyleSheet(
-                f"background-color: {qcolor.name()}; border: 1px solid #888;")
+                f"background-color: {qcolor.name(QColor.HexArgb)}; border: 1px solid #888;")
         
         # 保存颜色值到临时数据
-        self.temp_color = [qcolor.redF(), qcolor.greenF(), qcolor.blueF(), 1.0]
+        self.temp_color = new_color
+        
+        # 更新RGBA spinners
+        if hasattr(self, 'rgba_spinners') and len(self.rgba_spinners) == 4:
+            for i, val in enumerate(new_color):
+                with QSignalBlocker(self.rgba_spinners[i]):
+                    self.rgba_spinners[i].setValue(val)
 
     def clear_layout(self, layout):
         """清除布局中的所有小部件，确保它们被正确删除"""
@@ -957,6 +990,62 @@ class PropertyPanel(QDockWidget):
             print(f"加载保存的状态失败: {str(e)}")
             # 初始化为空列表
             self.states = []
+
+    def _create_rgba_spinners(self, color):
+        """创建RGBA颜色控制的spinners"""
+        rgba_widget = QWidget()
+        rgba_layout = QHBoxLayout()
+        rgba_widget.setLayout(rgba_layout)
+        
+        self.rgba_spinners = []
+        rgba_labels = ["R", "G", "B", "A"]
+        
+        # 确保颜色有4个分量
+        if len(color) < 4:
+            color = list(color) + [1.0] * (4 - len(color))
+        
+        for i, (val, label) in enumerate(zip(color, rgba_labels)):
+            # 创建标签和spinner的小容器
+            container = QWidget()
+            container_layout = QVBoxLayout()
+            container_layout.setContentsMargins(0, 0, 0, 0)
+            container_layout.setSpacing(2)
+            container.setLayout(container_layout)
+            
+            # 添加标签
+            lbl = QLabel(label)
+            lbl.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(lbl)
+            
+            # 创建spinner
+            spinner = QDoubleSpinBox()
+            spinner.setRange(0.0, 1.0)
+            spinner.setSingleStep(0.01)
+            spinner.setDecimals(2)
+            spinner.setValue(val)
+            
+            container_layout.addWidget(spinner)
+            rgba_layout.addWidget(container)
+            self.rgba_spinners.append(spinner)
+        
+        return rgba_widget
+
+    def _on_rgba_changed(self):
+        """处理RGBA值变化"""
+        if not self.current_geo or self._in_update or not hasattr(self, 'rgba_spinners'):
+            return
+        
+        # 获取新的RGBA值
+        new_color = [spinner.value() for spinner in self.rgba_spinners]
+        
+        # 更新颜色预览
+        r, g, b, a = new_color
+        r_int, g_int, b_int = int(r*255), int(g*255), int(b*255)
+        self.color_preview.setStyleSheet(
+            f"background-color: rgba({r_int}, {g_int}, {b_int}, {a}); border: 1px solid #888;")
+        
+        # 更新临时颜色
+        self.temp_color = new_color
 
 class NumpyJSONEncoder(json.JSONEncoder):
     """处理numpy数组JSON序列化的自定义编码器"""
