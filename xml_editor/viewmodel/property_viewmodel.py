@@ -134,10 +134,6 @@ class PropertyViewModel(QObject):
         # 基本属性
         if property_name == "name":
             self._selected_object.name = value
-        # 类型变更功能暂时不可用，因为SceneViewModel没有change_object_type方法
-        # elif property_name == "type":
-        #     # 类型变更需要在场景模型中处理
-        #     return self._scene_model.change_object_type(self._selected_object, value)
         elif property_name == "visible":
             self._selected_object.visible = value
         

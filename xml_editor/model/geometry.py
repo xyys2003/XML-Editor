@@ -189,7 +189,6 @@ class BaseGeometry:
         translation_matrix[:3, 3] = self.position
         translation_matrix[:3, :3] = rot_3x3
         
-        # 正确的乘法顺序: T * R * S
         self.transform_matrix = translation_matrix
     
     def update_transform_matrix(self):

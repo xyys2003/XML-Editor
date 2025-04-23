@@ -20,61 +20,7 @@ try:
     glutInit()
 except Exception as e:
     print(f"警告: 无法初始化GLUT: {e}")
-    # 定义替代函数
-    def _draw_cube_alternative():
-        """替代glutSolidCube的立方体绘制函数"""
-        vertices = [
-            # 前面
-            [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
-            # 后面
-            [-1, -1, -1], [-1, 1, -1], [1, 1, -1], [1, -1, -1],
-            # 上面
-            [-1, 1, -1], [-1, 1, 1], [1, 1, 1], [1, 1, -1],
-            # 下面
-            [-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1],
-            # 右面
-            [1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1],
-            # 左面
-            [-1, -1, -1], [-1, -1, 1], [-1, 1, 1], [-1, 1, -1]
-        ]
-        
-        normals = [
-            [0, 0, 1], [0, 0, 1], [0, 0, 1], [0, 0, 1],  # 前面
-            [0, 0, -1], [0, 0, -1], [0, 0, -1], [0, 0, -1],  # 后面
-            [0, 1, 0], [0, 1, 0], [0, 1, 0], [0, 1, 0],  # 上面
-            [0, -1, 0], [0, -1, 0], [0, -1, 0], [0, -1, 0],  # 下面
-            [1, 0, 0], [1, 0, 0], [1, 0, 0], [1, 0, 0],  # 右面
-            [-1, 0, 0], [-1, 0, 0], [-1, 0, 0], [-1, 0, 0]  # 左面
-        ]
-        
-        faces = [
-            [0, 1, 2, 3],  # 前面
-            [4, 5, 6, 7],  # 后面
-            [8, 9, 10, 11],  # 上面
-            [12, 13, 14, 15],  # 下面
-            [16, 17, 18, 19],  # 右面
-            [20, 21, 22, 23]   # 左面
-        ]
-        
-        glBegin(GL_QUADS)
-        for face in faces:
-            for i in face:
-                glNormal3fv(normals[i])
-                glVertex3fv([v * 1.0 for v in vertices[i]])
-        glEnd()
-    
-    # 使用替代函数
-    glutSolidCube = lambda size: (_draw_cube_alternative(), None)[1]
-    
-    def _draw_sphere_alternative(radius, slices, stacks):
-        """替代glutSolidSphere的球体绘制函数"""
-        quadric = gluNewQuadric()
-        gluQuadricDrawStyle(quadric, GLU_FILL)
-        gluQuadricNormals(quadric, GLU_SMOOTH)
-        gluSphere(quadric, radius, slices, stacks)
-        gluDeleteQuadric(quadric)
-    
-    glutSolidSphere = _draw_sphere_alternative
+    raise e
 
 class OpenGLView(QOpenGLWidget):
     """
@@ -118,9 +64,20 @@ class OpenGLView(QOpenGLWidget):
         # 连接信号
         self._scene_viewmodel.geometriesChanged.connect(self.update)
         self._scene_viewmodel.selectionChanged.connect(self.update)
-        
+        self._scene_viewmodel.objectChanged.connect(self.update)  # 监听对象变化信号
+        self._scene_viewmodel.transformModeChanged.connect(self.update)  # 监
+
         # 捕获焦点
         self.setFocusPolicy(Qt.StrongFocus)
+        
+        # 变换控制器状态
+        self._dragging_controller = False
+        self._controller_axis = None  # 'x', 'y', 'z' 或 None
+        self._drag_start_pos = None
+        self._drag_start_value = None
+        
+        # 坐标系选择 (True: 局部坐标系, False: 全局坐标系)
+        self._use_local_coords = False
     
     def minimumSizeHint(self):
         """返回建议的最小尺寸"""
@@ -173,15 +130,28 @@ class OpenGLView(QOpenGLWidget):
         # 更新摄像机配置到场景视图模型
         self._update_camera_config()
         
+        # 渲染顺序：先绘制网格和几何体
+        
         # 绘制网格
         self._draw_grid()
-        
-        # 绘制坐标轴
-        self._draw_axes()
         
         # 绘制场景中的几何体
         for geometry in self._scene_viewmodel.geometries:
             self._draw_geometry(geometry)
+            
+        # 渲染坐标系和控制器，确保它们始终可见
+        
+        # 绘制世界坐标轴（禁用深度测试，确保始终可见）
+        glDisable(GL_DEPTH_TEST)
+        self._draw_axes()
+        glEnable(GL_DEPTH_TEST)
+        
+        # 如果有选中的对象且处于操作模式，直接绘制变换控制器
+        selected_geo = self._scene_viewmodel.selected_geometry
+        if selected_geo and self._scene_viewmodel.operation_mode != OperationMode.OBSERVE:
+            glDisable(GL_DEPTH_TEST)
+            self._draw_transform_controller(selected_geo)
+            glEnable(GL_DEPTH_TEST)
     
     def _update_projection(self, width, height):
         """更新投影矩阵"""
@@ -227,7 +197,11 @@ class OpenGLView(QOpenGLWidget):
     def _draw_grid(self):
         """绘制地面网格"""
         glDisable(GL_LIGHTING)
-        glColor4f(0.5, 0.5, 0.5, 0.5)  # 灰色
+        
+        # 将网格线设为更透明
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glColor4f(0.5, 0.5, 0.5, 0.3)  # 灰色，更低的透明度
         
         glBegin(GL_LINES)
         
@@ -248,25 +222,61 @@ class OpenGLView(QOpenGLWidget):
     def _draw_axes(self):
         """绘制坐标轴"""
         glDisable(GL_LIGHTING)
+
+        glLineWidth(1.0)
         
         glBegin(GL_LINES)
         
         # X轴（红色）
         glColor3f(1.0, 0.0, 0.0)
         glVertex3f(0, 0, 0)
-        glVertex3f(1, 0, 0)
+        glVertex3f(1., 0, 0)
         
         # Y轴（绿色）
         glColor3f(0.0, 1.0, 0.0)
         glVertex3f(0, 0, 0)
-        glVertex3f(0, 1, 0)
+        glVertex3f(0, 1., 0)
         
         # Z轴（蓝色）
         glColor3f(0.0, 0.0, 1.0)
         glVertex3f(0, 0, 0)
-        glVertex3f(0, 0, 1)
+        glVertex3f(0, 0, 1.)
         
         glEnd()
+        
+        # 绘制轴端小锥体增强可视性
+        
+        # X轴锥体（红色）
+        glColor3f(1.0, 0.0, 0.0)
+        glPushMatrix()
+        glTranslatef(1., 0, 0)
+        glRotatef(90, 0, 1, 0)
+        try:
+            glutSolidCone(0.08, 0.2, 8, 8)
+        except Exception:
+            pass
+        glPopMatrix()
+        
+        # Y轴锥体（绿色）
+        glColor3f(0.0, 1.0, 0.0)
+        glPushMatrix()
+        glTranslatef(0, 1., 0)
+        glRotatef(-90, 1, 0, 0)
+        try:
+            glutSolidCone(0.08, 0.2, 8, 8)
+        except Exception:
+            pass
+        glPopMatrix()
+        
+        # Z轴锥体（蓝色）
+        glColor3f(0.0, 0.0, 1.0)
+        glPushMatrix()
+        glTranslatef(0, 0, 1.)
+        try:
+            glutSolidCone(0.08, 0.2, 8, 8)
+        except Exception:
+            pass
+        glPopMatrix()
         
         glEnable(GL_LIGHTING)
     
@@ -320,7 +330,12 @@ class OpenGLView(QOpenGLWidget):
         
         # 如果被选中，增加亮度
         if selected:
-            glColor4f(min(color[0] + 0.2, 1.0), min(color[1] + 0.2, 1.0), min(color[2] + 0.2, 1.0), color[3] * 0.5)
+            # 根据操作模式调整透明度
+            if self._scene_viewmodel.operation_mode != OperationMode.OBSERVE:
+                # 操作模式下使对象半透明
+                glColor4f(min(color[0] + 0.2, 1.0), min(color[1] + 0.2, 1.0), min(color[2] + 0.2, 1.0), 0.5)
+            else:
+                glColor4f(min(color[0] + 0.2, 1.0), min(color[1] + 0.2, 1.0), min(color[2] + 0.2, 1.0), color[3])
         else:
             glColor4f(color[0], color[1], color[2], color[3])
         
@@ -345,15 +360,157 @@ class OpenGLView(QOpenGLWidget):
                 self._draw_wireframe_cube(geometry.size[0], geometry.size[1], geometry.size[2]+geometry.size[0], highlight=True)
             else:
                 self._draw_wireframe_cube(geometry.size[0], geometry.size[1], geometry.size[2], highlight=True)
+        
+    def _draw_translation_gizmo(self):
+        """绘制平移控制器"""
+        glDisable(GL_LIGHTING)
+        
+        # 绘制X轴（红色）
+        glColor3f(1.0, 0.0, 0.0)
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, 0)
+        glVertex3f(2, 0, 0)
+        glEnd()
+        
+        # X轴箭头
+        glPushMatrix()
+        glTranslatef(2, 0, 0)
+        glRotatef(90, 0, 1, 0)
+        glutSolidCone(0.1, 0.3, 10, 10)
+        glPopMatrix()
+        
+        # 绘制Y轴（绿色）
+        glColor3f(0.0, 1.0, 0.0)
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 2, 0)
+        glEnd()
+        
+        # Y轴箭头
+        glPushMatrix()
+        glTranslatef(0, 2, 0)
+        glRotatef(-90, 1, 0, 0)
+        glutSolidCone(0.1, 0.3, 10, 10)
+        glPopMatrix()
+        
+        # 绘制Z轴（蓝色）
+        glColor3f(0.0, 0.0, 1.0)
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 0, 2)
+        glEnd()
+        
+        # Z轴箭头
+        glPushMatrix()
+        glTranslatef(0, 0, 2)
+        glutSolidCone(0.1, 0.3, 10, 10)
+        glPopMatrix()
+        
+        glEnable(GL_LIGHTING)
+        
+    def _draw_rotation_gizmo(self):
+        """绘制旋转控制器"""
+        glDisable(GL_LIGHTING)
+        
+        # X轴旋转环（红色）
+        glColor3f(1.0, 0.0, 0.0)
+        self._draw_rotation_ring(1.5, 0, 0, 1, 0, 0)
+        
+        # Y轴旋转环（绿色）
+        glColor3f(0.0, 1.0, 0.0)
+        self._draw_rotation_ring(1.5, 1, 0, 0, 0, 1, 0)
+        
+        # Z轴旋转环（蓝色）
+        glColor3f(0.0, 0.0, 1.0)
+        self._draw_rotation_ring(1.5, 0, 1, 0, 0, 0, 1)
+        
+        glEnable(GL_LIGHTING)
+        
+    def _draw_rotation_ring(self, radius, axis_x, axis_y, axis_z, up_x=0, up_y=1, up_z=0):
+        """绘制旋转环"""
+        segments = 32
+        angle_step = 270.0 / segments
+        
+        glPushMatrix()
+        
+        # 对准轴方向
+        if axis_x == 1:
+            glRotatef(90, 0, 1, 0)
+        elif axis_y == 1:
+            glRotatef(90, 1, 0, 0)
+        
+        # 绘制半圆弧
+        glBegin(GL_LINE_STRIP)
+        for i in range(segments + 1):
+            angle = i * angle_step
+            x = radius * np.cos(np.radians(angle))
+            y = radius * np.sin(np.radians(angle))
+            glVertex3f(x, y, 0)
+        glEnd()
+        
+        # 绘制箭头
+        glPushMatrix()
+        glTranslatef(radius, 0, 0)
+        glRotatef(90, 1, 0, 0)
+        glutSolidCone(0.1, 0.3, 10, 10)
+        glPopMatrix()
+        
+        glPopMatrix()
+        
+    def _draw_scale_gizmo(self):
+        """绘制缩放控制器"""
+        glDisable(GL_LIGHTING)
+        
+        # X轴缩放控制（红色）
+        glColor3f(1.0, 0.0, 0.0)
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, 0)
+        glVertex3f(1.5, 0, 0)
+        glEnd()
+        
+        # X轴立方体手柄
+        glPushMatrix()
+        glTranslatef(1.5, 0, 0)
+        glScalef(0.2, 0.2, 0.2)
+        glutSolidCube(2.0)
+        glPopMatrix()
+        
+        # Y轴缩放控制（绿色）
+        glColor3f(0.0, 1.0, 0.0)
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 1.5, 0)
+        glEnd()
+        
+        # Y轴立方体手柄
+        glPushMatrix()
+        glTranslatef(0, 1.5, 0)
+        glScalef(0.2, 0.2, 0.2)
+        glutSolidCube(2.0)
+        glPopMatrix()
+        
+        # Z轴缩放控制（蓝色）
+        glColor3f(0.0, 0.0, 1.0)
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 0, 1.5)
+        glEnd()
+        
+        # Z轴立方体手柄
+        glPushMatrix()
+        glTranslatef(0, 0, 1.5)
+        glScalef(0.2, 0.2, 0.2)
+        glutSolidCube(2.0)
+        glPopMatrix()
+        
+        glEnable(GL_LIGHTING)
     
     def _draw_box(self, x, y, z):
         """绘制立方体"""
         glPushMatrix()
         glScalef(x, y, z)
-        try:
-            glutSolidCube(2.0)
-        except Exception:
-            _draw_cube_alternative()
+        glutSolidCube(2.0)
+
         glPopMatrix()
     
     def _draw_sphere(self, radius):
@@ -427,10 +584,7 @@ class OpenGLView(QOpenGLWidget):
         """绘制平面"""
         glPushMatrix()
         glScalef(1.0, 1.0, 0.01)  # 使平面非常薄
-        try:
-            glutSolidCube(2.0)
-        except Exception:
-            _draw_cube_alternative()
+        glutSolidCube(2.0)
         glPopMatrix()
     
     def _draw_wireframe_cube(self, x, y, z, highlight=False):
@@ -494,6 +648,29 @@ class OpenGLView(QOpenGLWidget):
         self._last_mouse_pos = event.pos()
         self._is_mouse_pressed = True
         
+        # 如果有选中的对象且处于操作模式，尝试拾取变换控制器
+        selected_geo = self._scene_viewmodel.selected_geometry
+        operation_mode = self._scene_viewmodel.operation_mode
+        
+        if selected_geo and operation_mode != OperationMode.OBSERVE:
+            # 射线投射，检查是否点击到了控制器
+            result = self._pick_controller(event.x(), event.y())
+            if result:
+                self._dragging_controller = True
+                self._controller_axis = result
+                self._drag_start_pos = event.pos()
+                
+                # 记录拖动开始时的初始值
+                if operation_mode == OperationMode.TRANSLATE:
+                    self._drag_start_value = selected_geo.get_position().copy()
+                elif operation_mode == OperationMode.ROTATE:
+                    self._drag_start_value = selected_geo.get_rotation().copy()
+                elif operation_mode == OperationMode.SCALE:
+                    self._drag_start_value = selected_geo.get_scale().copy()
+                
+                # 如果在拖动控制器，不传递给场景视图模型
+                return
+        
         # 如果是左键且处于观察模式，尝试选择对象
         if event.button() == Qt.LeftButton and self._scene_viewmodel.operation_mode == OperationMode.OBSERVE:
             self._scene_viewmodel.select_at(event.x(), event.y(), self.width(), self.height())
@@ -508,6 +685,13 @@ class OpenGLView(QOpenGLWidget):
         """处理鼠标释放事件"""
         self._is_mouse_pressed = False
         
+        # 重置变换控制器状态
+        if self._dragging_controller:
+            self._dragging_controller = False
+            self._controller_axis = None
+            self._drag_start_pos = None
+            self._drag_start_value = None
+        
         # 发出信号
         self.mouseReleased.emit(event)
         
@@ -519,8 +703,24 @@ class OpenGLView(QOpenGLWidget):
         dx = event.x() - self._last_mouse_pos.x()
         dy = event.y() - self._last_mouse_pos.y()
         
+        # 如果正在拖动变换控制器
+        if self._dragging_controller and self._controller_axis:
+            selected_geo = self._scene_viewmodel.selected_geometry
+            operation_mode = self._scene_viewmodel.operation_mode
+            
+            if selected_geo:
+                # 处理不同的操作模式
+                if operation_mode == OperationMode.TRANSLATE:
+                    self._handle_translation_drag(selected_geo, dx, dy)
+                elif operation_mode == OperationMode.ROTATE:
+                    self._handle_rotation_drag(selected_geo, dx, dy)
+                elif operation_mode == OperationMode.SCALE:
+                    self._handle_scale_drag(selected_geo, dx, dy)
+                
+                # 强制更新界面
+                self.update()
         # 如果鼠标按下，根据当前模式执行不同操作
-        if self._is_mouse_pressed:
+        elif self._is_mouse_pressed:
             # 处理摄像机旋转（左键拖动）
             if event.buttons() & Qt.LeftButton:
                 self._camera_rotation_y += dx * 0.5
@@ -569,6 +769,15 @@ class OpenGLView(QOpenGLWidget):
         # 处理Shift键
         if event.key() == Qt.Key_Shift:
             self._is_shift_pressed = True
+            
+        # 按下空格键切换坐标系
+        elif event.key() == Qt.Key_Space:
+            self._use_local_coords = not self._use_local_coords
+            self.update()
+            
+        # 按下Escape键取消选择
+        elif event.key() == Qt.Key_Escape:
+            self._scene_viewmodel.clear_selection()
         
         # 发出信号
         self.keyPressed.emit(event)
@@ -585,4 +794,300 @@ class OpenGLView(QOpenGLWidget):
         self._camera_rotation_x = 30.0
         self._camera_rotation_y = -45.0
         self._camera_target = np.array([0.0, 0.0, 0.0])
-        self.update() 
+        self.update()
+    
+    def _pick_controller(self, screen_x, screen_y):
+        """
+        检测是否点击到变换控制器
+        
+        参数:
+            screen_x: 屏幕X坐标
+            screen_y: 屏幕Y坐标
+            
+        返回:
+            轴标识('x', 'y', 'z')或None
+        """
+        # 这里用简化的方法判断：
+        # 实际项目中应该使用射线投射和几何求交来实现更精确的拾取
+        
+        # 构造射线
+        ray_origin, ray_direction = self._screen_to_ray(screen_x, screen_y)
+        
+        selected_geo = self._scene_viewmodel.selected_geometry
+        if not selected_geo:
+            return None
+            
+        # 获取控制器在世界空间中的位置
+        if self._use_local_coords:
+            # 使用局部坐标系
+            controller_origin = selected_geo.get_world_position()
+            # 获取局部坐标轴方向
+            local_x = selected_geo.transform_matrix[:3, 0]
+            local_y = selected_geo.transform_matrix[:3, 1]
+            local_z = selected_geo.transform_matrix[:3, 2]
+        else:
+            # 使用全局坐标系
+            controller_origin = selected_geo.get_world_position()
+            local_x = np.array([1, 0, 0])
+            local_y = np.array([0, 1, 0])
+            local_z = np.array([0, 0, 1])
+        
+        # 检查射线与控制器轴的接近度
+        threshold = 0.1
+        
+        # X轴检测 (红色)
+        x_end = controller_origin + local_x * 2.0
+        dist_to_x = self._distance_point_to_line(ray_origin, ray_direction, controller_origin, x_end)
+        if dist_to_x < threshold:
+            return 'x'
+            
+        # Y轴检测 (绿色)
+        y_end = controller_origin + local_y * 2.0
+        dist_to_y = self._distance_point_to_line(ray_origin, ray_direction, controller_origin, y_end)
+        if dist_to_y < threshold:
+            return 'y'
+            
+        # Z轴检测 (蓝色)
+        z_end = controller_origin + local_z * 2.0
+        dist_to_z = self._distance_point_to_line(ray_origin, ray_direction, controller_origin, z_end)
+        if dist_to_z < threshold:
+            return 'z'
+            
+        return None
+        
+    def _distance_point_to_line(self, ray_origin, ray_direction, line_start, line_end):
+        """计算射线到线段的最短距离"""
+        line_vec = line_end - line_start
+        line_len = np.linalg.norm(line_vec)
+        line_dir = line_vec / line_len
+        
+        # 计算射线和线段之间的公垂线
+        v = ray_origin - line_start
+        a = np.dot(ray_direction, line_dir)
+        b = np.dot(ray_direction, v)
+        c = np.dot(line_dir, v)
+        d = np.dot(ray_direction, ray_direction)
+        e = np.dot(line_dir, line_dir)
+        
+        # 参数化参数
+        t = (a*c - b*e) / (a*a - d*e)
+        s = (a*b - c*d) / (a*a - d*e)
+        
+        # 限制s在[0, line_len]范围内
+        s = max(0, min(line_len, s))
+        
+        # 射线上的点
+        p_ray = ray_origin + t * ray_direction
+        # 线段上的点
+        p_line = line_start + s * line_dir
+        
+        # 计算距离
+        return np.linalg.norm(p_ray - p_line)
+        
+    def _handle_translation_drag(self, geometry, dx, dy):
+        """处理平移拖动"""
+        # 根据拖动轴和摄像机方向计算拖动量
+        drag_amount = self._calculate_drag_amount(dx, dy, 0.01)
+        
+        # 获取当前位置
+        current_pos = geometry.get_position()
+        
+        # 根据控制器轴应用拖动
+        if self._controller_axis == 'x':
+            if self._use_local_coords:
+                # 局部坐标系
+                local_x = geometry.transform_matrix[:3, 0]
+                current_pos += local_x * drag_amount
+            else:
+                # 全局坐标系
+                current_pos[0] += drag_amount
+        elif self._controller_axis == 'y':
+            if self._use_local_coords:
+                # 局部坐标系
+                local_y = geometry.transform_matrix[:3, 1]
+                current_pos += local_y * drag_amount
+            else:
+                # 全局坐标系
+                current_pos[1] += drag_amount
+        elif self._controller_axis == 'z':
+            if self._use_local_coords:
+                # 局部坐标系
+                local_z = geometry.transform_matrix[:3, 2]
+                current_pos += local_z * drag_amount
+            else:
+                # 全局坐标系
+                current_pos[2] += drag_amount
+                
+        # 更新几何体位置
+        geometry.set_position(current_pos)
+        
+    def _handle_rotation_drag(self, geometry, dx, dy):
+        """处理旋转拖动"""
+        # 根据拖动轴和摄像机方向计算旋转量（角度）
+        rotation_amount = self._calculate_drag_amount(dx, dy, 0.5)
+        
+        # 获取当前旋转
+        current_rotation = geometry.get_rotation()
+        
+        # 根据控制器轴应用旋转
+        if self._controller_axis == 'x':
+            current_rotation[0] += rotation_amount
+        elif self._controller_axis == 'y':
+            current_rotation[1] += rotation_amount
+        elif self._controller_axis == 'z':
+            current_rotation[2] += rotation_amount
+            
+        # 更新几何体旋转
+        geometry.set_rotation(current_rotation)
+        
+    def _handle_scale_drag(self, geometry, dx, dy):
+        """处理缩放拖动"""
+        # 根据拖动轴和摄像机方向计算缩放量
+        scale_amount = 1.0 + self._calculate_drag_amount(dx, dy, 0.01)
+        
+        # 获取当前缩放
+        current_scale = geometry.get_scale()
+        
+        # 根据控制器轴应用缩放
+        if self._controller_axis == 'x':
+            current_scale[0] *= scale_amount
+        elif self._controller_axis == 'y':
+            current_scale[1] *= scale_amount
+        elif self._controller_axis == 'z':
+            current_scale[2] *= scale_amount
+            
+        # 更新几何体缩放
+        geometry.set_scale(current_scale)
+        
+    def _calculate_drag_amount(self, dx, dy, sensitivity):
+        """
+        根据屏幕拖动量计算实际的拖动量
+        
+        参数:
+            dx: 屏幕X方向拖动量
+            dy: 屏幕Y方向拖动量
+            sensitivity: 灵敏度系数
+            
+        返回:
+            实际的拖动量
+        """
+        # 获取摄像机前向方向
+        camera_forward = np.array([
+            np.cos(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x)),
+            np.sin(np.radians(self._camera_rotation_x)),
+            np.sin(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x))
+        ])
+        
+        # 获取摄像机右向方向
+        camera_right = np.array([
+            np.cos(np.radians(self._camera_rotation_y - 90)),
+            0,
+            np.sin(np.radians(self._camera_rotation_y - 90))
+        ])
+        
+        # 获取摄像机上向方向
+        camera_up = np.cross(camera_right, -camera_forward)
+        camera_up = camera_up / np.linalg.norm(camera_up)
+        
+        # 控制器轴的方向（基于全局或局部坐标系）
+        if self._controller_axis == 'x':
+            if self._use_local_coords and self._scene_viewmodel.selected_geometry:
+                axis_dir = self._scene_viewmodel.selected_geometry.transform_matrix[:3, 0]
+            else:
+                axis_dir = np.array([1, 0, 0])
+        elif self._controller_axis == 'y':
+            if self._use_local_coords and self._scene_viewmodel.selected_geometry:
+                axis_dir = self._scene_viewmodel.selected_geometry.transform_matrix[:3, 1]
+            else:
+                axis_dir = np.array([0, 1, 0])
+        elif self._controller_axis == 'z':
+            if self._use_local_coords and self._scene_viewmodel.selected_geometry:
+                axis_dir = self._scene_viewmodel.selected_geometry.transform_matrix[:3, 2]
+            else:
+                axis_dir = np.array([0, 0, 1])
+        else:
+            return 0
+            
+        # 计算在摄像机坐标系中的拖动方向
+        drag_dir = camera_right * dx + camera_up * -dy
+        
+        # 投影到轴方向
+        drag_amount = np.dot(drag_dir, axis_dir) * sensitivity
+        
+        return drag_amount
+    
+    def _screen_to_ray(self, screen_x, screen_y):
+        """
+        将屏幕坐标转换为射线
+        
+        参数:
+            screen_x: 屏幕X坐标
+            screen_y: 屏幕Y坐标
+            
+        返回:
+            (ray_origin, ray_direction): 射线起点和方向
+        """
+        # 获取当前视口
+        viewport = glGetIntegerv(GL_VIEWPORT)
+        
+        # 将屏幕坐标标准化为NDC坐标 [-1, 1]
+        x = 2.0 * screen_x / viewport[2] - 1.0
+        y = 1.0 - 2.0 * screen_y / viewport[3]  # OpenGL的Y坐标是从底部向上的
+        
+        # 创建射线
+        ray_clip = np.array([x, y, -1.0, 1.0])
+        
+        # 变换到眼坐标空间
+        inv_projection = np.linalg.inv(self._scene_viewmodel._camera_config['projection_matrix'])
+        ray_eye = inv_projection @ ray_clip
+        ray_eye[2] = -1.0
+        ray_eye[3] = 0.0
+        
+        # 变换到世界坐标空间
+        inv_view = np.linalg.inv(self._scene_viewmodel._camera_config['view_matrix'])
+        ray_world = inv_view @ ray_eye
+        ray_direction = ray_world[:3]
+        ray_direction = ray_direction / np.linalg.norm(ray_direction)
+        
+        # 射线起点为摄像机位置
+        ray_origin = self._scene_viewmodel._camera_config['position']
+        
+        return ray_origin, ray_direction
+    
+    def _draw_transform_controller(self, geometry):
+        """
+        直接绘制变换控制器（不受深度测试影响）
+        
+        参数:
+            geometry: 选中的几何体
+        """
+        transform_mode = self._scene_viewmodel.transform_mode
+        
+        # 保存当前矩阵
+        glPushMatrix()
+        
+        # 根据坐标系选择决定变换控制器的位置和方向
+        if hasattr(self, '_use_local_coords') and self._use_local_coords:
+            # 使用局部坐标系 - 使用物体的完整变换矩阵
+            matrix = geometry.transform_matrix.T.flatten().tolist()
+            glMultMatrixf(matrix)
+        else:
+            # 使用全局坐标系 - 只移动到物体位置，不旋转
+            glTranslatef(*geometry.get_world_position())
+        
+        # 设置混合模式，使控制器在几何体上方清晰可见
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        
+        if transform_mode == TransformMode.TRANSLATE:
+            # 绘制平移控制器（三个轴）
+            self._draw_translation_gizmo()
+        elif transform_mode == TransformMode.ROTATE:
+            # 绘制旋转控制器（三个环）
+            self._draw_rotation_gizmo()
+        elif transform_mode == TransformMode.SCALE:
+            # 绘制缩放控制器（三个轴）
+            self._draw_scale_gizmo()
+        
+        # 恢复矩阵
+        glPopMatrix() 

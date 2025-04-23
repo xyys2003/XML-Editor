@@ -6,7 +6,7 @@
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                            QGroupBox, QRadioButton, QComboBox, QLabel, 
-                           QButtonGroup, QToolButton)
+                           QButtonGroup, QToolButton, QGridLayout)
 from PyQt5.QtCore import Qt
 
 from ..model.geometry import TransformMode, OperationMode, GeometryType
@@ -30,7 +30,6 @@ class ControlPanel(QWidget):
         self._control_viewmodel = control_viewmodel
         
         # 连接视图模型的信号
-        self._control_viewmodel.transformModeChanged.connect(self._update_transform_buttons)
         self._control_viewmodel.operationModeChanged.connect(self._update_operation_buttons)
         
         # 创建UI
@@ -43,10 +42,7 @@ class ControlPanel(QWidget):
         main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(8)
         
-        # 创建变换工具组
-        self._create_transform_tools(main_layout)
-        
-        # 创建集合对象操作组
+        # 创建操作模式组
         self._create_operation_tools(main_layout)
         
         # 创建几何体创建组
@@ -54,40 +50,6 @@ class ControlPanel(QWidget):
         
         # 底部填充空间
         main_layout.addStretch()
-    
-    def _create_transform_tools(self, parent_layout):
-        """
-        创建变换工具组
-        
-        参数:
-            parent_layout: 父布局
-        """
-        transform_group = QGroupBox("变换工具")
-        transform_layout = QHBoxLayout(transform_group)
-        transform_layout.setContentsMargins(4, 4, 4, 4)
-        transform_layout.setSpacing(4)
-        
-        # 创建变换按钮
-        self._translate_btn = self._create_mode_button("平移", "translate")
-        self._rotate_btn = self._create_mode_button("旋转", "rotate")
-        self._scale_btn = self._create_mode_button("缩放", "scale")
-        
-        # 添加按钮到布局
-        transform_layout.addWidget(self._translate_btn)
-        transform_layout.addWidget(self._rotate_btn)
-        transform_layout.addWidget(self._scale_btn)
-        
-        # 创建按钮组
-        self._transform_button_group = QButtonGroup(self)
-        self._transform_button_group.addButton(self._translate_btn, TransformMode.TRANSLATE.value)
-        self._transform_button_group.addButton(self._rotate_btn, TransformMode.ROTATE.value)
-        self._transform_button_group.addButton(self._scale_btn, TransformMode.SCALE.value)
-        self._transform_button_group.buttonClicked.connect(self._on_transform_mode_changed)
-        
-        # 默认选中平移模式
-        self._translate_btn.setChecked(True)
-        
-        parent_layout.addWidget(transform_group)
     
     def _create_operation_tools(self, parent_layout):
         """
@@ -97,7 +59,8 @@ class ControlPanel(QWidget):
             parent_layout: 父布局
         """
         operation_group = QGroupBox("操作模式")
-        operation_layout = QVBoxLayout(operation_group)
+        # 使用网格布局，2行2列
+        operation_layout = QGridLayout(operation_group)
         operation_layout.setContentsMargins(4, 4, 4, 4)
         operation_layout.setSpacing(4)
         
@@ -107,11 +70,11 @@ class ControlPanel(QWidget):
         self._scale_radio = QRadioButton("缩放")
         self._select_radio = QRadioButton("选择")
         
-        # 添加按钮到布局
-        operation_layout.addWidget(self._translate_radio)
-        operation_layout.addWidget(self._rotate_radio)
-        operation_layout.addWidget(self._scale_radio)
-        operation_layout.addWidget(self._select_radio)
+        # 添加按钮到网格布局，2行2列排列
+        operation_layout.addWidget(self._translate_radio, 0, 0)
+        operation_layout.addWidget(self._rotate_radio, 0, 1)
+        operation_layout.addWidget(self._scale_radio, 1, 0)
+        operation_layout.addWidget(self._select_radio, 1, 1)
         
         # 创建按钮组
         self._operation_button_group = QButtonGroup(self)
@@ -180,24 +143,6 @@ class ControlPanel(QWidget):
         
         return button
     
-    def _on_transform_mode_changed(self, button):
-        """
-        处理变换模式变更
-        
-        参数:
-            button: 被点击的按钮
-        """
-        mode_id = self._transform_button_group.id(button)
-        transform_mode = TransformMode(mode_id)
-        
-        # 更新视图模型
-        if transform_mode == TransformMode.TRANSLATE:
-            self._control_viewmodel.set_translate_mode()
-        elif transform_mode == TransformMode.ROTATE:
-            self._control_viewmodel.set_rotate_mode()
-        elif transform_mode == TransformMode.SCALE:
-            self._control_viewmodel.set_scale_mode()
-    
     def _on_operation_mode_changed(self, button):
         """
         处理操作模式变更
@@ -208,8 +153,16 @@ class ControlPanel(QWidget):
         mode_id = self._operation_button_group.id(button)
         operation_mode = OperationMode(mode_id)
         
-        # 更新视图模型
+        # 更新视图模型的操作模式
         self._control_viewmodel.operation_mode = operation_mode
+        
+        # 根据操作模式同时更新变换模式
+        if operation_mode == OperationMode.TRANSLATE:
+            self._control_viewmodel.transform_mode = TransformMode.TRANSLATE
+        elif operation_mode == OperationMode.ROTATE:
+            self._control_viewmodel.transform_mode = TransformMode.ROTATE
+        elif operation_mode == OperationMode.SCALE:
+            self._control_viewmodel.transform_mode = TransformMode.SCALE
     
     def _on_create_geometry(self):
         """处理几何体创建请求"""
@@ -219,25 +172,6 @@ class ControlPanel(QWidget):
         
         # 调用视图模型创建几何体
         self._control_viewmodel._scene_viewmodel.create_geometry(geometry_type)
-    
-    def _update_transform_buttons(self, transform_mode):
-        """
-        更新变换按钮状态
-        
-        参数:
-            transform_mode: 当前变换模式
-        """
-        self._transform_button_group.blockSignals(True)
-        
-        # 更新按钮选中状态
-        if transform_mode == TransformMode.TRANSLATE:
-            self._translate_btn.setChecked(True)
-        elif transform_mode == TransformMode.ROTATE:
-            self._rotate_btn.setChecked(True)
-        elif transform_mode == TransformMode.SCALE:
-            self._scale_btn.setChecked(True)
-        
-        self._transform_button_group.blockSignals(False)
     
     def _update_operation_buttons(self, operation_mode):
         """

@@ -130,7 +130,8 @@ class GeometryRaycaster:
         all_geometries = self._collect_all_geometries(self.geometries)
         
         for geo in all_geometries:
-            if hasattr(geo, 'type') and geo.type != 'group':  # 只测试实际几何体，不测试组
+            # 只测试实际几何体，不测试组，并且跳过被选中的对象（如果在操作模式下）
+            if (hasattr(geo, 'type') and geo.type != 'group' and not (hasattr(geo, 'selected') and geo.selected)):
                 result = self._intersect_geometry(geo, ray_origin, ray_direction)
                 if result.is_hit() and result.distance < closest_result.distance:
                     closest_result = result
