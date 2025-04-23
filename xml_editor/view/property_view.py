@@ -60,6 +60,10 @@ class PropertyView(QWidget):
         # 包含所有属性的容器（方便动态更新）
         self._container = QWidget()
         self._container.setLayout(self._form_layout)
+        
+        # 设置初始宽度
+        self.setMinimumWidth(200)
+        
         main_layout.addWidget(self._container)
         
         # 默认情况下隐藏属性编辑区域

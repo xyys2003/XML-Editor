@@ -10,7 +10,7 @@ import os
 
 from ..model.geometry import (
     Geometry, GeometryGroup, GeometryType, 
-    Material, TransformMode, OperationMode
+    Material, OperationMode
 )
 from ..model.xml_parser import XMLParser
 from ..model.raycaster import GeometryRaycaster, RaycastResult
@@ -24,14 +24,13 @@ class SceneViewModel(QObject):
     # 信号定义
     geometriesChanged = pyqtSignal()  # 几何体列表发生变化
     selectionChanged = pyqtSignal(object)  # 选中对象变化
-    transformModeChanged = pyqtSignal(object)  # 变换模式变化
+    operationModeChanged = pyqtSignal(object)  # 操作模式变化
     objectChanged = pyqtSignal(object)  # 对象属性变化
     
     def __init__(self):
         super().__init__()
         self._geometries = []  # 场景中的几何体列表
         self._selected_geo = None  # 当前选中的几何体
-        self._transform_mode = TransformMode.TRANSLATE  # 当前变换模式
         self._operation_mode = OperationMode.OBSERVE  # 当前操作模式
         self._raycaster = None  # 射线投射器
         self._camera_config = {
@@ -78,13 +77,13 @@ class SceneViewModel(QObject):
     @property
     def transform_mode(self):
         """获取当前变换模式"""
-        return self._transform_mode
+        return self._operation_mode
     
     @transform_mode.setter
     def transform_mode(self, value):
         """设置变换模式并发出通知"""
-        self._transform_mode = value
-        self.transformModeChanged.emit(value)
+        self._operation_mode = value
+        self.operationModeChanged.emit(value)
     
     @property
     def operation_mode(self):
@@ -93,8 +92,12 @@ class SceneViewModel(QObject):
     
     @operation_mode.setter
     def operation_mode(self, value):
-        """设置操作模式"""
+        """设置操作模式并发出变换模式变化通知"""
+        old_value = self._operation_mode
         self._operation_mode = value
+        # 如果操作模式变化，也发出变换模式变化信号
+        if old_value != value:
+            self.operationModeChanged.emit(value)
     
     def set_camera_config(self, config):
         """设置摄像机配置"""
@@ -209,24 +212,6 @@ class SceneViewModel(QObject):
         # 触发更新
         self.geometriesChanged.emit()
     
-    def raycast(self, screen_x, screen_y, viewport_width, viewport_height):
-        """
-        执行射线投射，返回命中的几何体
-        
-        参数:
-            screen_x: 屏幕X坐标
-            screen_y: 屏幕Y坐标
-            viewport_width: 视口宽度
-            viewport_height: 视口高度
-        
-        返回:
-            RaycastResult: 射线投射结果
-        """
-        if not self._raycaster:
-            self._update_raycaster()
-        
-        return self._raycaster.raycast(screen_x, screen_y, viewport_width, viewport_height)
-    
     def select_at(self, screen_x, screen_y, viewport_width, viewport_height):
         """
         在指定屏幕坐标选择几何体
@@ -240,13 +225,12 @@ class SceneViewModel(QObject):
         返回:
             bool: 是否选中了几何体
         """
-        result = self.raycast(screen_x, screen_y, viewport_width, viewport_height)
-        
+        result = self._raycaster.raycast(screen_x, screen_y, viewport_width, viewport_height)
+
         if result.is_hit():
             self.selected_geometry = result.geometry
             return True
         else:
-            self.selected_geometry = None
             return False
     
     def clear_selection(self):

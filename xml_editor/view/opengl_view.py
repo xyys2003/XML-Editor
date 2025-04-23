@@ -13,8 +13,8 @@ from OpenGL.GL import *
 from OpenGL.GLU import *
 from OpenGL.GLUT import *  # 添加GLUT库导入
 
-from ..model.geometry import GeometryType, OperationMode, TransformMode
-
+from ..model.geometry import GeometryType, OperationMode
+from ..viewmodel.scene_viewmodel import SceneViewModel
 # 初始化GLUT
 try:
     glutInit()
@@ -35,7 +35,7 @@ class OpenGLView(QOpenGLWidget):
     mouseWheel = pyqtSignal(QWheelEvent)
     keyPressed = pyqtSignal(QKeyEvent)
     
-    def __init__(self, scene_viewmodel, parent=None):
+    def __init__(self, scene_viewmodel: SceneViewModel, parent=None):
         """
         初始化OpenGL视图
         
@@ -65,7 +65,7 @@ class OpenGLView(QOpenGLWidget):
         self._scene_viewmodel.geometriesChanged.connect(self.update)
         self._scene_viewmodel.selectionChanged.connect(self.update)
         self._scene_viewmodel.objectChanged.connect(self.update)  # 监听对象变化信号
-        self._scene_viewmodel.transformModeChanged.connect(self.update)  # 监
+        self._scene_viewmodel.operationModeChanged.connect(self.update)  # 监
 
         # 捕获焦点
         self.setFocusPolicy(Qt.StrongFocus)
@@ -124,9 +124,6 @@ class OpenGLView(QOpenGLWidget):
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
         
-        # 应用摄像机变换
-        self._apply_camera_transform()
-        
         # 更新摄像机配置到场景视图模型
         self._update_camera_config()
         
@@ -148,7 +145,7 @@ class OpenGLView(QOpenGLWidget):
         
         # 如果有选中的对象且处于操作模式，直接绘制变换控制器
         selected_geo = self._scene_viewmodel.selected_geometry
-        if selected_geo and self._scene_viewmodel.operation_mode != OperationMode.OBSERVE:
+        if selected_geo and self._scene_viewmodel.operation_mode != OperationMode.OBSERVE and selected_geo.visible:
             glDisable(GL_DEPTH_TEST)
             self._draw_transform_controller(selected_geo)
             glEnable(GL_DEPTH_TEST)
@@ -158,32 +155,25 @@ class OpenGLView(QOpenGLWidget):
         aspect = width / height if height > 0 else 1.0
         gluPerspective(45.0, aspect, 0.1, 100.0)
     
-    def _apply_camera_transform(self):
-        """应用摄像机变换"""
-        # 计算摄像机位置
-        camera_x = self._camera_target[0] + self._camera_distance * np.cos(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x))
-        camera_y = self._camera_target[1] + self._camera_distance * np.sin(np.radians(self._camera_rotation_x))
-        camera_z = self._camera_target[2] + self._camera_distance * np.sin(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x))
-        
-        # 设置视图
-        gluLookAt(
-            camera_x, camera_y, camera_z,                   # 摄像机位置
-            self._camera_target[0], self._camera_target[1], self._camera_target[2],  # 目标点
-            0.0, 1.0, 0.0                                  # 上向量
-        )
-    
     def _update_camera_config(self):
         """更新摄像机配置到场景视图模型"""
         # 计算摄像机位置
         camera_x = self._camera_target[0] + self._camera_distance * np.cos(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x))
         camera_y = self._camera_target[1] + self._camera_distance * np.sin(np.radians(self._camera_rotation_x))
         camera_z = self._camera_target[2] + self._camera_distance * np.sin(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x))
-        
+
+        # 设置视图
+        gluLookAt(
+            camera_x, camera_y, camera_z,                   # 摄像机位置
+            self._camera_target[0], self._camera_target[1], self._camera_target[2],  # 目标点
+            0.0, 1.0, 0.0                                  # 上向量
+        )
+
         camera_position = np.array([camera_x, camera_y, camera_z])
         
         # 获取当前的投影矩阵和模型视图矩阵
-        projection_matrix = glGetDoublev(GL_PROJECTION_MATRIX)
-        modelview_matrix = glGetDoublev(GL_MODELVIEW_MATRIX)
+        projection_matrix = glGetDoublev(GL_PROJECTION_MATRIX).T
+        modelview_matrix = glGetDoublev(GL_MODELVIEW_MATRIX).T
         
         # 更新场景视图模型的摄像机配置
         self._scene_viewmodel.set_camera_config({
@@ -652,7 +642,7 @@ class OpenGLView(QOpenGLWidget):
         selected_geo = self._scene_viewmodel.selected_geometry
         operation_mode = self._scene_viewmodel.operation_mode
         
-        if selected_geo and operation_mode != OperationMode.OBSERVE:
+        if selected_geo and operation_mode != OperationMode.OBSERVE and selected_geo.visible:
             # 射线投射，检查是否点击到了控制器
             result = self._pick_controller(event.x(), event.y())
             if result:
@@ -667,12 +657,10 @@ class OpenGLView(QOpenGLWidget):
                     self._drag_start_value = selected_geo.get_rotation().copy()
                 elif operation_mode == OperationMode.SCALE:
                     self._drag_start_value = selected_geo.get_scale().copy()
-                
-                # 如果在拖动控制器，不传递给场景视图模型
                 return
         
-        # 如果是左键且处于观察模式，尝试选择对象
-        if event.button() == Qt.LeftButton and self._scene_viewmodel.operation_mode == OperationMode.OBSERVE:
+        # 选择对象
+        if event.button() == Qt.LeftButton:
             self._scene_viewmodel.select_at(event.x(), event.y(), self.width(), self.height())
         
         # 发出信号
@@ -807,12 +795,9 @@ class OpenGLView(QOpenGLWidget):
         返回:
             轴标识('x', 'y', 'z')或None
         """
-        # 这里用简化的方法判断：
-        # 实际项目中应该使用射线投射和几何求交来实现更精确的拾取
-        
         # 构造射线
-        ray_origin, ray_direction = self._screen_to_ray(screen_x, screen_y)
-        
+        ray_origin, ray_direction = self._scene_viewmodel._raycaster._screen_to_ray(screen_x, screen_y, self.width(), self.height())
+
         selected_geo = self._scene_viewmodel.selected_geometry
         if not selected_geo:
             return None
@@ -1016,44 +1001,6 @@ class OpenGLView(QOpenGLWidget):
         
         return drag_amount
     
-    def _screen_to_ray(self, screen_x, screen_y):
-        """
-        将屏幕坐标转换为射线
-        
-        参数:
-            screen_x: 屏幕X坐标
-            screen_y: 屏幕Y坐标
-            
-        返回:
-            (ray_origin, ray_direction): 射线起点和方向
-        """
-        # 获取当前视口
-        viewport = glGetIntegerv(GL_VIEWPORT)
-        
-        # 将屏幕坐标标准化为NDC坐标 [-1, 1]
-        x = 2.0 * screen_x / viewport[2] - 1.0
-        y = 1.0 - 2.0 * screen_y / viewport[3]  # OpenGL的Y坐标是从底部向上的
-        
-        # 创建射线
-        ray_clip = np.array([x, y, -1.0, 1.0])
-        
-        # 变换到眼坐标空间
-        inv_projection = np.linalg.inv(self._scene_viewmodel._camera_config['projection_matrix'])
-        ray_eye = inv_projection @ ray_clip
-        ray_eye[2] = -1.0
-        ray_eye[3] = 0.0
-        
-        # 变换到世界坐标空间
-        inv_view = np.linalg.inv(self._scene_viewmodel._camera_config['view_matrix'])
-        ray_world = inv_view @ ray_eye
-        ray_direction = ray_world[:3]
-        ray_direction = ray_direction / np.linalg.norm(ray_direction)
-        
-        # 射线起点为摄像机位置
-        ray_origin = self._scene_viewmodel._camera_config['position']
-        
-        return ray_origin, ray_direction
-    
     def _draw_transform_controller(self, geometry):
         """
         直接绘制变换控制器（不受深度测试影响）
@@ -1061,7 +1008,7 @@ class OpenGLView(QOpenGLWidget):
         参数:
             geometry: 选中的几何体
         """
-        transform_mode = self._scene_viewmodel.transform_mode
+        operation_mode = self._scene_viewmodel.operation_mode
         
         # 保存当前矩阵
         glPushMatrix()
@@ -1079,13 +1026,13 @@ class OpenGLView(QOpenGLWidget):
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
-        if transform_mode == TransformMode.TRANSLATE:
+        if operation_mode == OperationMode.TRANSLATE:
             # 绘制平移控制器（三个轴）
             self._draw_translation_gizmo()
-        elif transform_mode == TransformMode.ROTATE:
+        elif operation_mode == OperationMode.ROTATE:
             # 绘制旋转控制器（三个环）
             self._draw_rotation_gizmo()
-        elif transform_mode == TransformMode.SCALE:
+        elif operation_mode == OperationMode.SCALE:
             # 绘制缩放控制器（三个轴）
             self._draw_scale_gizmo()
         

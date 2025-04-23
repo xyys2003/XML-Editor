@@ -6,7 +6,7 @@
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 import copy
-
+from ..viewmodel.scene_viewmodel import SceneViewModel
 class HierarchyViewModel(QObject):
     """
     层级树视图模型类
@@ -17,7 +17,7 @@ class HierarchyViewModel(QObject):
     hierarchyChanged = pyqtSignal()  # 层级结构发生变化
     selectionRequested = pyqtSignal(object)  # 请求选择指定对象
     
-    def __init__(self, scene_viewmodel):
+    def __init__(self, scene_viewmodel:SceneViewModel):
         """
         初始化层级树视图模型
         

@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                            QButtonGroup, QToolButton, QGridLayout)
 from PyQt5.QtCore import Qt
 
-from ..model.geometry import TransformMode, OperationMode, GeometryType
+from ..model.geometry import OperationMode, GeometryType
 
 class ControlPanel(QWidget):
     """
@@ -65,27 +65,27 @@ class ControlPanel(QWidget):
         operation_layout.setSpacing(4)
         
         # 创建操作模式单选按钮
+        self._observe_radio = QRadioButton("观察")
         self._translate_radio = QRadioButton("平移")
         self._rotate_radio = QRadioButton("旋转")
         self._scale_radio = QRadioButton("缩放")
-        self._select_radio = QRadioButton("选择")
         
         # 添加按钮到网格布局，2行2列排列
-        operation_layout.addWidget(self._translate_radio, 0, 0)
-        operation_layout.addWidget(self._rotate_radio, 0, 1)
-        operation_layout.addWidget(self._scale_radio, 1, 0)
-        operation_layout.addWidget(self._select_radio, 1, 1)
+        operation_layout.addWidget(self._observe_radio, 0, 0)
+        operation_layout.addWidget(self._translate_radio, 0, 1)
+        operation_layout.addWidget(self._rotate_radio, 1, 0)
+        operation_layout.addWidget(self._scale_radio, 1, 1)
         
         # 创建按钮组
         self._operation_button_group = QButtonGroup(self)
+        self._operation_button_group.addButton(self._observe_radio, OperationMode.OBSERVE.value)
         self._operation_button_group.addButton(self._translate_radio, OperationMode.TRANSLATE.value)
         self._operation_button_group.addButton(self._rotate_radio, OperationMode.ROTATE.value)
         self._operation_button_group.addButton(self._scale_radio, OperationMode.SCALE.value)
-        self._operation_button_group.addButton(self._select_radio, OperationMode.SELECT.value)
         self._operation_button_group.buttonClicked.connect(self._on_operation_mode_changed)
         
         # 默认选中平移模式
-        self._translate_radio.setChecked(True)
+        self._observe_radio.setChecked(True)
         
         parent_layout.addWidget(operation_group)
     
@@ -155,14 +155,6 @@ class ControlPanel(QWidget):
         
         # 更新视图模型的操作模式
         self._control_viewmodel.operation_mode = operation_mode
-        
-        # 根据操作模式同时更新变换模式
-        if operation_mode == OperationMode.TRANSLATE:
-            self._control_viewmodel.transform_mode = TransformMode.TRANSLATE
-        elif operation_mode == OperationMode.ROTATE:
-            self._control_viewmodel.transform_mode = TransformMode.ROTATE
-        elif operation_mode == OperationMode.SCALE:
-            self._control_viewmodel.transform_mode = TransformMode.SCALE
     
     def _on_create_geometry(self):
         """处理几何体创建请求"""
@@ -183,13 +175,13 @@ class ControlPanel(QWidget):
         self._operation_button_group.blockSignals(True)
         
         # 更新按钮选中状态
-        if operation_mode == OperationMode.TRANSLATE:
+        if operation_mode == OperationMode.OBSERVE:
+            self._observe_radio.setChecked(True)
+        elif operation_mode == OperationMode.TRANSLATE:
             self._translate_radio.setChecked(True)
         elif operation_mode == OperationMode.ROTATE:
             self._rotate_radio.setChecked(True)
         elif operation_mode == OperationMode.SCALE:
             self._scale_radio.setChecked(True)
-        elif operation_mode == OperationMode.SELECT:
-            self._select_radio.setChecked(True)
         
         self._operation_button_group.blockSignals(False) 

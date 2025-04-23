@@ -5,7 +5,7 @@
 """
 
 from PyQt5.QtCore import QObject, pyqtSignal
-
+from ..viewmodel.scene_viewmodel import SceneViewModel
 class PropertyViewModel(QObject):
     """
     属性视图模型
@@ -15,7 +15,7 @@ class PropertyViewModel(QObject):
     # 信号：属性变化时触发，视图将更新显示
     propertiesChanged = pyqtSignal()
     
-    def __init__(self, scene_model):
+    def __init__(self, scene_model:SceneViewModel):
         """
         初始化属性视图模型
         

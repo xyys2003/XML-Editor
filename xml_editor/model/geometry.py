@@ -8,21 +8,12 @@ import numpy as np
 from enum import Enum, auto
 from scipy.spatial.transform import Rotation as R
 
-class TransformMode(Enum):
-    """变换模式枚举"""
-    TRANSLATE = auto()
-    ROTATE = auto()
-    SCALE = auto()
-
-
 class OperationMode(Enum):
     """操作模式枚举"""
     OBSERVE = auto()
     TRANSLATE = auto()
     ROTATE = auto()
     SCALE = auto()
-    SELECT = auto()
-
 
 class GeometryType(Enum):
     """几何体类型枚举"""
@@ -69,6 +60,7 @@ class BaseGeometry:
                  size=(1, 1, 1), rotation=(0, 0, 0), parent=None):
         self.type = geo_type
         self.name = name
+        self._visible = True
         self._position = np.array(position, dtype=np.float32)
         self._size = np.array(size, dtype=np.float32)
         self._rotation = np.array(rotation, dtype=np.float32)
@@ -94,6 +86,16 @@ class BaseGeometry:
         self._update_transform()
         self._update_aabb()
     
+    @property
+    def visible(self):
+        """获取可见性"""
+        return self._visible
+    
+    @visible.setter
+    def visible(self, value):
+        """设置可见性"""
+        self._visible = value
+
     @property
     def position(self):
         """获取位置"""
