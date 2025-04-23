@@ -286,7 +286,7 @@ class SceneViewModel(QObject):
             # 根据文件扩展名决定保存格式
             _, ext = os.path.splitext(filename)
             
-            if ext.lower() == '.mjcf':
+            if ext.lower() == '.xml':
                 return XMLParser.export_mujoco_xml(filename, self._geometries)
             else:
                 return XMLParser.export_enhanced_xml(filename, self._geometries)

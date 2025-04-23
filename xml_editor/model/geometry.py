@@ -78,7 +78,7 @@ class BaseGeometry:
         self.aabb_min = np.zeros(3, dtype=np.float32)
         self.aabb_max = np.zeros(3, dtype=np.float32)
         self.transform_matrix = np.eye(4)
-        
+       
         # 设置默认颜色
         type_colors = {
             GeometryType.BOX.value: (0.8, 0.5, 0.2, 1.0),    # 橙色
@@ -91,8 +91,8 @@ class BaseGeometry:
         }
         self.material.color = type_colors.get(geo_type, (1.0, 1.0, 1.0, 1.0))
         
-        self._update_aabb()
         self._update_transform()
+        self._update_aabb()
     
     @property
     def position(self):
@@ -162,6 +162,12 @@ class BaseGeometry:
             # 椭球体 - 使用三个方向的半径
             self.aabb_min = self.position - self.size
             self.aabb_max = self.position + self.size
+        elif self.type == GeometryType.CAPSULE.value:
+            # 胶囊体 - 使用半径和半高度计算
+            radius = self.size[0]
+            height = self.size[2]
+            self.aabb_min = self.position - np.array([radius, radius, height+radius])
+            self.aabb_max = self.position + np.array([radius, radius, height+radius])
         else:
             # 其他几何体 - 使用半尺寸计算
             # 考虑旋转的影响（简化处理）
@@ -177,34 +183,18 @@ class BaseGeometry:
     
     def _update_transform(self):
         """更新变换矩阵"""
-        # 先缩放，再旋转，最后平移
-        scale_matrix = np.diag([self.size[0], self.size[1], self.size[2], 1.0])
-        
         # 使用scipy的Rotation创建旋转矩阵，注意使用角度制
         rot_3x3 = R.from_euler('xyz', self.rotation, degrees=True).as_matrix()
-        
-        # 将3x3旋转矩阵转换为4x4矩阵
-        rotation_matrix = np.eye(4)
-        rotation_matrix[:3, :3] = rot_3x3
-        
         translation_matrix = np.eye(4)
         translation_matrix[:3, 3] = self.position
+        translation_matrix[:3, :3] = rot_3x3
         
         # 正确的乘法顺序: T * R * S
-        self.transform_matrix = translation_matrix @ rotation_matrix @ scale_matrix
+        self.transform_matrix = translation_matrix
     
     def update_transform_matrix(self):
         """更新变换矩阵，考虑位置、旋转和父节点"""
-        # 创建基本变换矩阵
-        self.transform_matrix = np.eye(4)
-        
-        # 使用scipy的Rotation，避免手动构建矩阵
-        rot_3x3 = R.from_euler('xyz', self.rotation, degrees=True).as_matrix()
-        self.transform_matrix[:3, :3] = rot_3x3
-        
-        # 设置平移部分
-        self.transform_matrix[:3, 3] = self.position
-        
+        self._update_transform()
         # 如果有父节点，需要考虑父节点的变换
         if self.parent is not None and hasattr(self.parent, 'transform_matrix'):
             self.transform_matrix = self.parent.transform_matrix @ self.transform_matrix

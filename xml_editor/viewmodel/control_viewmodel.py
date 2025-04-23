@@ -98,7 +98,7 @@ class ControlViewModel(QObject):
         return self._scene_viewmodel.create_geometry(
             geo_type=GeometryType.SPHERE.value,
             position=(0, 0, 0),
-            size=(0.5, 0.5, 0.5),
+            size=(0.5, 0.5, 0.5),  # 初始尺寸均为0.5，仅使用一个半径值
             parent=parent
         )
     
@@ -115,7 +115,7 @@ class ControlViewModel(QObject):
         return self._scene_viewmodel.create_geometry(
             geo_type=GeometryType.CYLINDER.value,
             position=(0, 0, 0),
-            size=(0.5, 0.5, 1.0),
+            size=(0.5, 1.0, 0.5),  # 中间值为高度，x和z值为半径
             parent=parent
         )
     
@@ -132,7 +132,7 @@ class ControlViewModel(QObject):
         return self._scene_viewmodel.create_geometry(
             geo_type=GeometryType.CAPSULE.value,
             position=(0, 0, 0),
-            size=(0.5, 0.5, 1.0),
+            size=(0.5, 1.0, 0.5),  # 中间值为半高度，x和z值为半径
             parent=parent
         )
     

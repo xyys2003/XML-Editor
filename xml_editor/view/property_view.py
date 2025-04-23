@@ -109,6 +109,11 @@ class PropertyView(QWidget):
         self._scale_y = self._create_double_spinbox("scale_y", 0.01, 100.0, 0.1)
         self._scale_z = self._create_double_spinbox("scale_z", 0.01, 100.0, 0.1)
         
+        # 球体缩放联动控制
+        self._scale_x.valueChanged.connect(self._handle_sphere_scale)
+        self._scale_y.valueChanged.connect(self._handle_sphere_scale)
+        self._scale_z.valueChanged.connect(self._handle_sphere_scale)
+        
         scale_layout.addRow("X:", self._scale_x)
         scale_layout.addRow("Y:", self._scale_y)
         scale_layout.addRow("Z:", self._scale_z)
@@ -118,6 +123,51 @@ class PropertyView(QWidget):
         transform_layout.addWidget(scale_group)
         
         self._form_layout.addRow(transform_group)
+    
+    def _handle_sphere_scale(self, value):
+        """处理特殊几何体缩放联动"""
+        # 获取当前几何体类型
+        geo_type = self._property_viewmodel.get_property("type")
+        sender = self.sender()
+        
+        # 对不同几何体类型进行特殊处理
+        if geo_type == "sphere":
+            # 球体：三个轴的缩放值保持一致
+            # 阻止递归调用
+            self._scale_x.blockSignals(True)
+            self._scale_y.blockSignals(True)
+            self._scale_z.blockSignals(True)
+            
+            self._scale_x.setValue(value)
+            self._scale_y.setValue(value)
+            self._scale_z.setValue(value)
+            
+            self._scale_x.blockSignals(False)
+            self._scale_y.blockSignals(False)
+            self._scale_z.blockSignals(False)
+            
+            # 发送已修改的属性信号
+            self.propertyChanged.emit("scale", [value, value, value])
+            
+        elif geo_type in ["cylinder", "capsule"]:
+            # 圆柱体和胶囊体：X和Y轴保持一致（半径），Z轴独立（高度）
+            if sender in [self._scale_x, self._scale_y]:
+                # 如果改变的是X或Y（半径），则保持X和Y相同
+                self._scale_x.blockSignals(True)
+                self._scale_y.blockSignals(True)
+                
+                radius = value
+                self._scale_x.setValue(radius)
+                self._scale_y.setValue(radius)
+                
+                self._scale_x.blockSignals(False)
+                self._scale_y.blockSignals(False)
+                
+                # 获取当前高度
+                height = self._scale_z.value()
+                
+                # 更新缩放
+                self.propertyChanged.emit("scale", [radius, radius, height])
     
     def _create_geometry_group(self):
         """创建几何属性组"""

@@ -283,14 +283,14 @@ class OpenGLView(QOpenGLWidget):
         # 应用几何体的变换
         if hasattr(geometry, 'transform_matrix'):
             # 将NumPy矩阵转换为OpenGL兼容的格式
-            transform = geometry.transform_matrix.T.flatten().tolist()
-            glMultMatrixf(transform)
+            geom_transform = geometry.transform_matrix.T.flatten().tolist()
+            glMultMatrixf(geom_transform)
         
         # 绘制几何体
         if hasattr(geometry, 'type'):
             if geometry.type == 'group':
                 # 绘制组的包围盒（半透明）
-                self._draw_wireframe_cube(highlight=geometry == self._scene_viewmodel.selected_geometry)
+                self._draw_wireframe_cube(geometry.size[0], geometry.size[1], geometry.size[2], highlight=geometry == self._scene_viewmodel.selected_geometry)
             else:
                 # 根据几何体类型和选中状态绘制
                 self._draw_geometry_by_type(geometry, geometry == self._scene_viewmodel.selected_geometry)
@@ -311,61 +311,70 @@ class OpenGLView(QOpenGLWidget):
             geometry: 要绘制的几何体
             selected: 是否被选中
         """
+        # 检查可见性，如果不可见则直接返回
+        if hasattr(geometry, 'visible') and not geometry.visible:
+            return
+            
         # 设置材质
         color = geometry.material.color
         
         # 如果被选中，增加亮度
         if selected:
-            glColor4f(min(color[0] + 0.2, 1.0), min(color[1] + 0.2, 1.0), min(color[2] + 0.2, 1.0), color[3])
+            glColor4f(min(color[0] + 0.2, 1.0), min(color[1] + 0.2, 1.0), min(color[2] + 0.2, 1.0), color[3] * 0.5)
         else:
             glColor4f(color[0], color[1], color[2], color[3])
         
         # 根据几何体类型绘制
         if geometry.type == GeometryType.BOX.value:
-            self._draw_box()
+            self._draw_box(geometry.size[0], geometry.size[1], geometry.size[2])
         elif geometry.type == GeometryType.SPHERE.value:
-            self._draw_sphere()
+            self._draw_sphere(geometry.size[0])
         elif geometry.type == GeometryType.CYLINDER.value:
-            self._draw_cylinder()
+            self._draw_cylinder(geometry.size[0], geometry.size[2])
         elif geometry.type == GeometryType.CAPSULE.value:
-            self._draw_capsule()
+            self._draw_capsule(geometry.size[0], geometry.size[2])
         elif geometry.type == GeometryType.PLANE.value:
             self._draw_plane()
         else:
             # 默认使用立方体
-            self._draw_box()
+            self._draw_box(geometry.size[0], geometry.size[1], geometry.size[2])
         
         # 如果被选中，绘制包围盒
         if selected:
-            self._draw_wireframe_cube(highlight=True)
+            if geometry.type == GeometryType.CAPSULE.value:
+                self._draw_wireframe_cube(geometry.size[0], geometry.size[1], geometry.size[2]+geometry.size[0], highlight=True)
+            else:
+                self._draw_wireframe_cube(geometry.size[0], geometry.size[1], geometry.size[2], highlight=True)
     
-    def _draw_box(self):
+    def _draw_box(self, x, y, z):
         """绘制立方体"""
         glPushMatrix()
-        glScalef(1.0, 1.0, 1.0)
+        glScalef(x, y, z)
         try:
             glutSolidCube(2.0)
         except Exception:
             _draw_cube_alternative()
         glPopMatrix()
     
-    def _draw_sphere(self):
+    def _draw_sphere(self, radius):
         """绘制球体"""
         glPushMatrix()
-        sphere_radius = 1.0
+        sphere_radius = radius
         sphere_slices = 20
         sphere_stacks = 20
         glutSolidSphere(sphere_radius, sphere_slices, sphere_stacks)
         glPopMatrix()
     
-    def _draw_cylinder(self):
+    def _draw_cylinder(self, radius, height):
         """绘制圆柱体"""
-        glPushMatrix()
-        cylinder_radius = 1.0
-        cylinder_height = 2.0
+        cylinder_radius = radius
+        cylinder_height = height * 2.0
         cylinder_slices = 20
         cylinder_stacks = 1
-        
+
+        glPushMatrix()
+        glTranslatef(0.0, 0.0, -cylinder_height/2.0)
+
         gluCylinder(
             gluNewQuadric(),      # 二次曲面对象
             cylinder_radius,      # 底部半径
@@ -378,54 +387,53 @@ class OpenGLView(QOpenGLWidget):
         # 绘制底部和顶部圆盖
         gluDisk(gluNewQuadric(), 0.0, cylinder_radius, cylinder_slices, 1)
         
-        glPushMatrix()
         glTranslatef(0.0, 0.0, cylinder_height)
         gluDisk(gluNewQuadric(), 0.0, cylinder_radius, cylinder_slices, 1)
-        glPopMatrix()
         
         glPopMatrix()
     
-    def _draw_capsule(self):
+    def _draw_capsule(self, radius, height):
         """绘制胶囊体（简化为圆柱和两个半球）"""
         glPushMatrix()
-        capsule_radius = 1.0
-        capsule_height = 2.0
+        capsule_radius = radius
+        capsule_height = height * 2.0
         capsule_slices = 20
         capsule_stacks = 1
-        
-        # 绘制中间圆柱部分
-        gluCylinder(
-            gluNewQuadric(),      # 二次曲面对象
-            capsule_radius,       # 底部半径
-            capsule_radius,       # 顶部半径
-            capsule_height,       # 高度
-            capsule_slices,       # 径向细分
-            capsule_stacks        # 高度细分
-        )
+
+        glTranslatef(0.0, 0.0, -capsule_height/2.0)
+
+        if capsule_height > 0:
+            # 绘制中间圆柱部分
+            gluCylinder(
+                gluNewQuadric(),      # 二次曲面对象
+                capsule_radius,       # 底部半径
+                capsule_radius,       # 顶部半径
+                capsule_height,       # 高度
+                capsule_slices,       # 径向细分
+                capsule_stacks        # 高度细分
+            )
         
         # 绘制底部半球
         sphere_stacks = 10
         gluSphere(gluNewQuadric(), capsule_radius, capsule_slices, sphere_stacks)
         
         # 绘制顶部半球
-        glPushMatrix()
         glTranslatef(0.0, 0.0, capsule_height)
         gluSphere(gluNewQuadric(), capsule_radius, capsule_slices, sphere_stacks)
-        glPopMatrix()
         
         glPopMatrix()
     
     def _draw_plane(self):
         """绘制平面"""
         glPushMatrix()
-        glScalef(1.0, 0.01, 1.0)  # 使平面非常薄
+        glScalef(1.0, 1.0, 0.01)  # 使平面非常薄
         try:
             glutSolidCube(2.0)
         except Exception:
             _draw_cube_alternative()
         glPopMatrix()
     
-    def _draw_wireframe_cube(self, highlight=False):
+    def _draw_wireframe_cube(self, x, y, z, highlight=False):
         """
         绘制线框立方体
         
@@ -441,8 +449,10 @@ class OpenGLView(QOpenGLWidget):
             glColor4f(0.5, 0.5, 0.5, 0.7)  # 灰色
             glLineWidth(1.0)
         
-        glBegin(GL_LINES)
+        glPushMatrix()
+        glScalef(x, y, z)
         
+        glBegin(GL_LINES)
         # 底面
         glVertex3f(-1, -1, -1)
         glVertex3f(1, -1, -1)
@@ -472,8 +482,9 @@ class OpenGLView(QOpenGLWidget):
         glVertex3f(1, 1, 1)
         glVertex3f(-1, -1, 1)
         glVertex3f(-1, 1, 1)
-        
         glEnd()
+        
+        glPopMatrix()
         
         glLineWidth(1.0)
         glEnable(GL_LIGHTING)

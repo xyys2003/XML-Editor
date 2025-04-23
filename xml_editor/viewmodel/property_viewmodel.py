@@ -75,10 +75,13 @@ class PropertyViewModel(QObject):
         # 基本属性
         if property_name == "name":
             return self._selected_object.name
-        elif property_name == "visible":
-            return self._selected_object.visible
         elif property_name == "type":
-            return self._selected_object.type.value
+            if hasattr(self._selected_object.type, 'value'):
+                return self._selected_object.type.value
+            else:
+                return self._selected_object.type  # 处理group类型，它的类型是字符串
+        elif property_name == "visible":
+            return getattr(self._selected_object, "visible", True)
         
         # 变换属性
         elif property_name == "position":
@@ -100,13 +103,13 @@ class PropertyViewModel(QObject):
             return self._selected_object.rotation[2]
         
         elif property_name == "scale":
-            return self._selected_object.scale
+            return self._selected_object.size
         elif property_name == "scale_x":
-            return self._selected_object.scale[0]
+            return self._selected_object.size[0]
         elif property_name == "scale_y":
-            return self._selected_object.scale[1]
+            return self._selected_object.size[1]
         elif property_name == "scale_z":
-            return self._selected_object.scale[2]
+            return self._selected_object.size[2]
         
         # 材质属性
         elif property_name == "material_color":
@@ -131,11 +134,12 @@ class PropertyViewModel(QObject):
         # 基本属性
         if property_name == "name":
             self._selected_object.name = value
+        # 类型变更功能暂时不可用，因为SceneViewModel没有change_object_type方法
+        # elif property_name == "type":
+        #     # 类型变更需要在场景模型中处理
+        #     return self._scene_model.change_object_type(self._selected_object, value)
         elif property_name == "visible":
             self._selected_object.visible = value
-        elif property_name == "type":
-            # 类型变更需要在场景模型中处理
-            return self._scene_model.change_object_type(self._selected_object, value)
         
         # 变换属性
         elif property_name.startswith("position"):
@@ -167,18 +171,18 @@ class PropertyViewModel(QObject):
             self._selected_object.rotation = rotation
         
         elif property_name.startswith("scale"):
-            scale = list(self._selected_object.scale)
+            size = list(self._selected_object.size)
             
             if property_name == "scale":
-                scale = value
+                size = value
             elif property_name == "scale_x":
-                scale[0] = value
+                size[0] = value
             elif property_name == "scale_y":
-                scale[1] = value
+                size[1] = value
             elif property_name == "scale_z":
-                scale[2] = value
+                size[2] = value
             
-            self._selected_object.scale = scale
+            self._selected_object.size = size
         
         # 材质属性
         elif property_name == "material_color":

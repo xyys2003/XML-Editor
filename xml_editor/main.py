@@ -216,12 +216,12 @@ class MainWindow(QMainWindow):
     def _save_file_as(self):
         """另存为"""
         filename, _ = QFileDialog.getSaveFileName(
-            self, "保存场景", "", "XML文件 (*.xml);;所有文件 (*)"
+            self, "保存场景", "", "scene文件 (*.scene)"
         )
         
         if filename:
-            if not filename.lower().endswith(('.xml')):
-                filename += '.xml'
+            if not filename.lower().endswith(('.scene')):
+                filename += '.scene'
                 
             if self.scene_viewmodel.save_scene(filename):
                 self.statusBar().showMessage(f"已保存场景: {os.path.basename(filename)}")
@@ -231,12 +231,12 @@ class MainWindow(QMainWindow):
     def _export_mujoco(self):
         """导出为MuJoCo XML格式"""
         filename, _ = QFileDialog.getSaveFileName(
-            self, "导出为MuJoCo XML", "", "XML文件 (*.xml);;MJCF文件 (*.mjcf);;所有文件 (*)"
+            self, "导出为MuJoCo XML", "", "XML文件 (*.xml);;所有文件 (*)"
         )
         
         if filename:
-            if not filename.lower().endswith(('.xml', '.mjcf')):
-                filename += '.mjcf'
+            if not filename.lower().endswith(('.xml')):
+                filename += '.xml'
                 
             if self.scene_viewmodel.save_scene(filename):
                 self.statusBar().showMessage(f"已导出场景: {os.path.basename(filename)}")

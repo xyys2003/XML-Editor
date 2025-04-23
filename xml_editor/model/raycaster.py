@@ -10,16 +10,18 @@ from .geometry import BaseGeometry, GeometryGroup
 
 class RaycastResult:
     """
-    射线投射结果类，存储命中的几何体和命中点信息
+    射线投射结果类
+    
+    存储射线投射的结果信息
     """
     def __init__(self, geometry=None, distance=float('inf'), hit_point=None, normal=None):
         self.geometry = geometry  # 命中的几何体
         self.distance = distance  # 射线起点到命中点的距离
-        self.hit_point = hit_point or np.zeros(3)  # 世界坐标系中的命中点
-        self.normal = normal or np.zeros(3)  # 命中点的表面法线
+        self.hit_point = np.zeros(3) if hit_point is None else hit_point  # 世界坐标系中的命中点
+        self.normal = np.zeros(3) if normal is None else normal  # 命中点的法线方向
     
     def is_hit(self):
-        """判断是否命中了物体"""
+        """是否命中了几何体"""
         return self.geometry is not None and self.distance < float('inf')
 
 
