@@ -175,17 +175,17 @@ class OpenGLView(QOpenGLWidget):
         gluPerspective(45.0, aspect, 0.1, 100.0)
     
     def _update_camera_config(self):
-        """更新摄像机配置到场景视图模型"""
-        # 计算摄像机位置
+        """更新摄像机配置到场景视图模型（基于Z轴向上的坐标系）"""
+        # 计算摄像机位置，考虑Z轴向上的坐标系
         camera_x = self._camera_target[0] + self._camera_distance * np.cos(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x))
-        camera_y = self._camera_target[1] + self._camera_distance * np.sin(np.radians(self._camera_rotation_x))
-        camera_z = self._camera_target[2] + self._camera_distance * np.sin(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x))
+        camera_y = self._camera_target[1] + self._camera_distance * np.sin(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x))
+        camera_z = self._camera_target[2] + self._camera_distance * np.sin(np.radians(self._camera_rotation_x))
 
         # 设置视图
         gluLookAt(
             camera_x, camera_y, camera_z,                   # 摄像机位置
             self._camera_target[0], self._camera_target[1], self._camera_target[2],  # 目标点
-            0.0, 1.0, 0.0                                  # 上向量
+            0.0, 0.0, 1.0                                  # 上向量设置为Z轴
         )
 
         camera_position = np.array([camera_x, camera_y, camera_z])
@@ -198,7 +198,7 @@ class OpenGLView(QOpenGLWidget):
         self._scene_viewmodel.set_camera_config({
             'position': camera_position,
             'target': self._camera_target,
-            'up': np.array([0.0, 1.0, 0.0]),
+            'up': np.array([0.0, 0.0, 1.0]),  # 上向量设置为Z轴
             'projection_matrix': projection_matrix,
             'view_matrix': modelview_matrix
         })
@@ -214,15 +214,16 @@ class OpenGLView(QOpenGLWidget):
         
         glBegin(GL_LINES)
         
+        # 在XY平面上绘制网格（对应Z轴向上的坐标系）
         # 绘制x轴线
         for i in range(-10, 11):
-            glVertex3f(i, 0, -10)
-            glVertex3f(i, 0, 10)
+            glVertex3f(i, -10, 0)  # 更改为XY平面
+            glVertex3f(i, 10, 0)
         
-        # 绘制z轴线
+        # 绘制y轴线
         for i in range(-10, 11):
-            glVertex3f(-10, 0, i)
-            glVertex3f(10, 0, i)
+            glVertex3f(-10, i, 0)  # 更改为XY平面
+            glVertex3f(10, i, 0)
             
         glEnd()
         
@@ -356,7 +357,7 @@ class OpenGLView(QOpenGLWidget):
         elif geometry.type == GeometryType.CYLINDER.value:
             self._draw_cylinder(geometry.size[0], geometry.size[2])
         elif geometry.type == GeometryType.CAPSULE.value:
-            self._draw_capsule(geometry.size[0], geometry.size[1])
+            self._draw_capsule(geometry.size[0], geometry.size[2])
         elif geometry.type == GeometryType.PLANE.value:
             self._draw_plane()
         elif geometry.type == GeometryType.ELLIPSOID.value:
@@ -438,18 +439,27 @@ class OpenGLView(QOpenGLWidget):
         
         glEnable(GL_LIGHTING)
         
-    def _draw_rotation_ring(self, radius, axis_x, axis_y, axis_z, up_x=0, up_y=1, up_z=0):
-        """绘制旋转环"""
+    def _draw_rotation_ring(self, radius, axis_x, axis_y, axis_z, up_x=0, up_y=0, up_z=1):
+        """
+        绘制旋转环（适用于Z轴向上的坐标系）
+        
+        参数:
+            radius: 环半径
+            axis_x, axis_y, axis_z: 旋转轴的方向
+            up_x, up_y, up_z: 上向量的方向（默认为Z轴）
+        """
         segments = 32
         angle_step = 270.0 / segments
         
         glPushMatrix()
         
-        # 对准轴方向
-        if axis_x == 1:
+        # 对准轴方向，使环垂直于指定轴
+        # 在Z轴向上的系统中，这需要不同的旋转逻辑
+        if axis_x == 1:  # X轴环，垂直于YZ平面
             glRotatef(90, 0, 1, 0)
-        elif axis_y == 1:
-            glRotatef(90, 1, 0, 0)
+        elif axis_y == 1:  # Y轴环，垂直于XZ平面
+            glRotatef(-90, 1, 0, 0)
+        # Z轴环在XY平面上，不需要额外旋转
         
         # 绘制半圆弧
         glBegin(GL_LINE_STRIP)
@@ -463,12 +473,12 @@ class OpenGLView(QOpenGLWidget):
         # 绘制箭头
         glPushMatrix()
         glTranslatef(radius, 0, 0)
-        glRotatef(90, 1, 0, 0)
+        glRotatef(90, 0, 1, 0)
         glutSolidCone(0.1, 0.3, 10, 10)
         glPopMatrix()
         
         glPopMatrix()
-        
+    
     def _draw_scale_gizmo(self):
         """绘制缩放控制器"""
         glDisable(GL_LIGHTING)
@@ -540,14 +550,17 @@ class OpenGLView(QOpenGLWidget):
         glPopMatrix()
     
     def _draw_cylinder(self, radius, height):
-        """绘制圆柱体"""
+        """绘制圆柱体，使中心线沿着Z轴"""
         glPushMatrix()
-        
-        # Mujoco风格，绕X轴旋转90度使Z轴朝上
-        glRotatef(90, 1, 0, 0)
         
         # 创建二次曲面对象
         quad = gluNewQuadric()
+        
+        # 在Z轴向上的坐标系中，不需要旋转，直接沿Z轴绘制
+        # 圆柱体从-height到+height，中心在原点
+        
+        # 向下平移半高，使圆柱体中心位于原点
+        glTranslatef(0, 0, -height)
         
         # 绘制圆柱体
         cylinder_height = height * 2.0  # 全高
@@ -565,7 +578,7 @@ class OpenGLView(QOpenGLWidget):
         glPopMatrix()
     
     def _draw_capsule(self, radius, height):
-        """绘制胶囊体（圆柱+两个半球）"""
+        """绘制胶囊体（圆柱+两个半球），使中心线沿着Z轴"""
         glPushMatrix()
         
         # 创建二次曲面对象
@@ -602,8 +615,15 @@ class OpenGLView(QOpenGLWidget):
         """绘制平面"""
         glPushMatrix()
         
-        # 水平平面，非常薄的立方体
-        glScalef(1.0, 0.01, 1.0)
+        # 水平平面，非常薄的半透明立方体
+        # 设置半透明
+        glColor4f(glGetMaterialfv(GL_FRONT, GL_DIFFUSE)[0],
+                  glGetMaterialfv(GL_FRONT, GL_DIFFUSE)[1],
+                  glGetMaterialfv(GL_FRONT, GL_DIFFUSE)[2],
+                  0.5)  # 半透明
+        
+        # 使用固定大小而不是基于尺寸参数
+        glScalef(5.0, 0.01, 5.0)  # 极大且极薄的平面
         glutSolidCube(2.0)
         
         glPopMatrix()
@@ -752,24 +772,38 @@ class OpenGLView(QOpenGLWidget):
         elif self._is_mouse_pressed:
             # 处理摄像机旋转（左键拖动）
             if event.buttons() & Qt.LeftButton:
+                # 在Z轴向上的坐标系中，偏航角旋转仍然是绕Z轴
                 self._camera_rotation_y += dx * 0.5
-                self._camera_rotation_x = max(-90, min(90, self._camera_rotation_x + dy * 0.5))
+                
+                # 在Z轴向上的坐标系中，俯仰角是绕水平轴旋转
+                # 限制俯仰角范围，防止万向锁
+                new_pitch = self._camera_rotation_x + dy * 0.5
+                self._camera_rotation_x = max(-89, min(89, new_pitch))
+                
                 self.update()
             
             # 处理摄像机平移（右键拖动）
             elif event.buttons() & Qt.RightButton:
-                # 计算平移向量
+                # 通过当前视角计算水平平移向量（垂直于视线方向和上向量）
                 right_vector = np.array([
                     np.cos(np.radians(self._camera_rotation_y - 90)),
-                    0,
-                    np.sin(np.radians(self._camera_rotation_y - 90))
+                    np.sin(np.radians(self._camera_rotation_y - 90)),
+                    0  # Z分量为0，因为右向量应该与世界上向量垂直
                 ])
                 
-                up_vector = np.array([0, 1, 0])
+                # 根据当前视角计算前向量（垂直于右向量和上向量）
+                world_up = np.array([0, 0, 1])  # Z轴向上
+                camera_forward = np.array([
+                    np.cos(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x)),
+                    np.sin(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x)),
+                    np.sin(np.radians(self._camera_rotation_x))
+                ])
                 
-                # 应用平移
-                self._camera_target -= right_vector * dx * 0.001 * self._camera_distance
-                self._camera_target += up_vector * dy * 0.001 * self._camera_distance
+                # 在当前相机水平面内平移，垂直方向使用世界上向量
+                self._camera_target -= right_vector * dx * 0.01 * self._camera_distance
+                # 根据是否正在向上/向下看，调整垂直平移方向
+                vertical_dir = world_up if self._camera_rotation_x > 0 else -world_up
+                self._camera_target += world_up * dy * 0.01 * self._camera_distance
                 
                 self.update()
         
@@ -783,10 +817,16 @@ class OpenGLView(QOpenGLWidget):
         """处理鼠标滚轮事件"""
         # 更新摄像机距离
         delta = event.angleDelta().y() / 120  # 标准化滚轮步长
-        self._camera_distance *= 0.9 ** delta  # 放大/缩小10%
         
-        # 限制距离范围
-        self._camera_distance = max(0.1, min(100.0, self._camera_distance))
+        # 计算新的距离（指数缩放）
+        new_distance = self._camera_distance * (0.9 ** delta)  # 放大/缩小10%
+        
+        # 设置合理的最小和最大距离限制
+        MIN_DISTANCE = 0.5  # 最小距离，避免穿过物体
+        MAX_DISTANCE = 100.0  # 最大距离，避免视角太远
+        
+        # 应用限制
+        self._camera_distance = max(MIN_DISTANCE, min(MAX_DISTANCE, new_distance))
         
         self.update()
         
@@ -1140,7 +1180,7 @@ class OpenGLView(QOpenGLWidget):
         
     def _calculate_drag_amount(self, dx, dy, sensitivity):
         """
-        根据屏幕拖动量计算实际的拖动量
+        根据屏幕拖动量计算实际的拖动量（基于Z轴向上的坐标系）
         
         参数:
             dx: 屏幕X方向拖动量
@@ -1150,25 +1190,23 @@ class OpenGLView(QOpenGLWidget):
         返回:
             实际的拖动量
         """
-        # 获取摄像机前向方向
+        # 获取摄像机前向方向（Z轴向上坐标系）
         camera_forward = np.array([
             np.cos(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x)),
-            np.sin(np.radians(self._camera_rotation_x)),
-            np.sin(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x))
+            np.sin(np.radians(self._camera_rotation_y)) * np.cos(np.radians(self._camera_rotation_x)),
+            np.sin(np.radians(self._camera_rotation_x))
         ])
         
-        # 获取摄像机右向方向
-        camera_right = np.array([
-            np.cos(np.radians(self._camera_rotation_y - 90)),
-            0,
-            np.sin(np.radians(self._camera_rotation_y - 90))
-        ])
+        # 获取摄像机右向量（垂直于前向量和世界上向量）
+        world_up = np.array([0, 0, 1])  # Z轴向上
+        camera_right = np.cross(camera_forward, world_up)
+        camera_right = camera_right / np.linalg.norm(camera_right)
         
-        # 获取摄像机上向方向
-        camera_up = np.cross(camera_right, -camera_forward)
+        # 获取摄像机上向量（垂直于前向量和右向量）
+        camera_up = np.cross(camera_right, camera_forward)
         camera_up = camera_up / np.linalg.norm(camera_up)
         
-        # 控制器轴的方向（基于全局或局部坐标系）
+        # 确定控制器轴的方向
         if self._controller_axis == 'x':
             if self._use_local_coords and self._scene_viewmodel.selected_geometry:
                 axis_dir = self._scene_viewmodel.selected_geometry.transform_matrix[:3, 0]
@@ -1186,11 +1224,11 @@ class OpenGLView(QOpenGLWidget):
                 axis_dir = np.array([0, 0, 1])
         else:
             return 0
-            
+        
         # 计算在摄像机坐标系中的拖动方向
         drag_dir = camera_right * dx + camera_up * -dy
         
-        # 投影到轴方向
+        # 投影到控制轴方向
         drag_amount = np.dot(drag_dir, axis_dir) * sensitivity
         
         return drag_amount

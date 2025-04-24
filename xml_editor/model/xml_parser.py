@@ -362,92 +362,7 @@ class XMLParser:
                 for child in objects.children:
                     XMLParser._update_transforms_recursive(child)
     
-    @staticmethod
-    def export_enhanced_xml(filename, geometries):
-        """
-        导出场景为增强XML格式（自定义格式）
-        
-        参数:
-            filename: 保存文件路径
-            geometries: 几何体对象列表
-            
-        返回:
-            bool: 是否成功导出
-        """
-        try:
-            root = ET.Element("Scene")
-            objects_elem = ET.SubElement(root, "Objects")
-            
-            # 递归添加对象
-            for obj in geometries:
-                XMLParser._add_object_to_enhanced_xml(objects_elem, obj)
-            
-            # 创建XML树
-            tree = ET.ElementTree(root)
-            
-            # 写入文件
-            tree.write(filename, encoding="utf-8", xml_declaration=True)
-            return True
-        except Exception as e:
-            print(f"导出增强XML时出错: {e}")
-            return False
-    
-    @staticmethod
-    def _add_object_to_enhanced_xml(parent_elem, obj):
-        """递归添加对象到增强XML"""
-        if obj.type == "group":
-            # 处理组
-            group_elem = ET.SubElement(parent_elem, "Group")
-            group_elem.set("name", obj.name)
-            
-            # 添加位置
-            pos_elem = ET.SubElement(group_elem, "Position")
-            pos_elem.set("x", str(obj.position[0]))
-            pos_elem.set("y", str(obj.position[1]))
-            pos_elem.set("z", str(obj.position[2]))
-            
-            # 添加旋转
-            rot_elem = ET.SubElement(group_elem, "Rotation")
-            rot_elem.set("x", str(obj.rotation[0]))
-            rot_elem.set("y", str(obj.rotation[1]))
-            rot_elem.set("z", str(obj.rotation[2]))
-            
-            # 处理子对象
-            if obj.children:
-                children_elem = ET.SubElement(group_elem, "Children")
-                for child in obj.children:
-                    XMLParser._add_object_to_enhanced_xml(children_elem, child)
-        else:
-            # 处理几何体
-            geo_elem = ET.SubElement(parent_elem, "Geometry")
-            geo_elem.set("name", obj.name)
-            geo_elem.set("type", obj.type)
-            
-            # 添加位置
-            pos_elem = ET.SubElement(geo_elem, "Position")
-            pos_elem.set("x", str(obj.position[0]))
-            pos_elem.set("y", str(obj.position[1]))
-            pos_elem.set("z", str(obj.position[2]))
-            
-            # 添加尺寸
-            size_elem = ET.SubElement(geo_elem, "Size")
-            size_elem.set("x", str(obj.size[0]))
-            size_elem.set("y", str(obj.size[1]))
-            size_elem.set("z", str(obj.size[2]))
-            
-            # 添加旋转
-            rot_elem = ET.SubElement(geo_elem, "Rotation")
-            rot_elem.set("x", str(obj.rotation[0]))
-            rot_elem.set("y", str(obj.rotation[1]))
-            rot_elem.set("z", str(obj.rotation[2]))
-            
-            # 添加材质
-            material_elem = ET.SubElement(geo_elem, "Material")
-            color_elem = ET.SubElement(material_elem, "Color")
-            color_elem.set("r", str(obj.material.color[0]))
-            color_elem.set("g", str(obj.material.color[1]))
-            color_elem.set("b", str(obj.material.color[2]))
-            color_elem.set("a", str(obj.material.color[3]))
+
     
     @staticmethod
     def export_mujoco_xml(filename, geometries):
@@ -480,11 +395,19 @@ class XMLParser:
             for obj in geometries:
                 XMLParser._add_object_to_mujoco(worldbody, obj)
             
-            # 创建XML树
+            # 创建并格式化XML树
             tree = ET.ElementTree(root)
             
+            # 使用minidom格式化XML
+            from xml.dom import minidom
+            rough_string = ET.tostring(root, 'utf-8')
+            reparsed = minidom.parseString(rough_string)
+            pretty_xml = reparsed.toprettyxml(indent="  ")
+            
             # 写入文件
-            tree.write(filename, encoding="utf-8", xml_declaration=True)
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(pretty_xml)
+            
             return True
         except Exception as e:
             print(f"导出MuJoCo XML时出错: {e}")
@@ -519,7 +442,7 @@ class XMLParser:
                 # 球体：只使用第一个尺寸作为半径
                 geom_elem.set("size", f"{obj.size[0]}")
             elif obj.type in [GeometryType.CYLINDER.value, GeometryType.CAPSULE.value]:
-                # 圆柱/胶囊：使用第一个尺寸作为半径，第三个作为半高
+                # 圆柱/胶囊：第一个尺寸为半径，第三个尺寸为半高
                 geom_elem.set("size", f"{obj.size[0]} {obj.size[2]}")
             else:
                 # 其他几何体：使用所有尺寸
@@ -559,4 +482,4 @@ class XMLParser:
     
     
     # 保存方法别名，使用增强XML格式
-    save = export_enhanced_xml 
+    save = export_mujoco_xml

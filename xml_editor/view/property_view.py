@@ -107,71 +107,180 @@ class PropertyView(QWidget):
         rotation_group.setLayout(rotation_layout)
         transform_layout.addWidget(rotation_group)
         
-        # 缩放控件
-        scale_layout = QFormLayout()
+        # 尺寸控件 - 创建一个尺寸组
+        self._size_group = QGroupBox("尺寸")
+        self._size_layout = QFormLayout(self._size_group)
+        
+        # 创建适用于不同几何体类型的控件
+        # 1. 通用三维尺寸控件 (用于box和ellipsoid)
+        self._box_size_x = self._create_double_spinbox("scale_x", 0.01, 100.0, 0.1)
+        self._box_size_y = self._create_double_spinbox("scale_y", 0.01, 100.0, 0.1)
+        self._box_size_z = self._create_double_spinbox("scale_z", 0.01, 100.0, 0.1)
+        
+        # 2. 球体半径控件
+        self._sphere_radius = self._create_double_spinbox("radius", 0.01, 100.0, 0.1)
+        self._sphere_radius.valueChanged.connect(self._handle_sphere_radius_change)
+        
+        # 3. 圆柱体/胶囊体控件
+        self._cylinder_radius = self._create_double_spinbox("cylinder_radius", 0.01, 100.0, 0.1)
+        self._cylinder_length = self._create_double_spinbox("cylinder_length", 0.01, 100.0, 0.1)
+        self._cylinder_radius.valueChanged.connect(self._handle_cylinder_radius_change)
+        self._cylinder_length.valueChanged.connect(self._handle_cylinder_length_change)
+        
+        # 4. 椭球体半径控件
+        self._ellipsoid_x = self._create_double_spinbox("scale_x", 0.01, 100.0, 0.1)
+        self._ellipsoid_y = self._create_double_spinbox("scale_y", 0.01, 100.0, 0.1)
+        self._ellipsoid_z = self._create_double_spinbox("scale_z", 0.01, 100.0, 0.1)
+        
+        # 将控件添加到布局，初始都不可见
+        self._box_size_label_x = QLabel("X轴:")
+        self._box_size_label_y = QLabel("Y轴:")
+        self._box_size_label_z = QLabel("Z轴:")
+        self._sphere_radius_label = QLabel("半径:")
+        self._cylinder_radius_label = QLabel("半径:")
+        self._cylinder_length_label = QLabel("长度:")
+        self._ellipsoid_x_label = QLabel("X半径:")
+        self._ellipsoid_y_label = QLabel("Y半径:")
+        self._ellipsoid_z_label = QLabel("Z半径:")
+        
+        self._size_layout.addRow(self._box_size_label_x, self._box_size_x)
+        self._size_layout.addRow(self._box_size_label_y, self._box_size_y)
+        self._size_layout.addRow(self._box_size_label_z, self._box_size_z)
+        self._size_layout.addRow(self._sphere_radius_label, self._sphere_radius)
+        self._size_layout.addRow(self._cylinder_radius_label, self._cylinder_radius)
+        self._size_layout.addRow(self._cylinder_length_label, self._cylinder_length)
+        self._size_layout.addRow(self._ellipsoid_x_label, self._ellipsoid_x)
+        self._size_layout.addRow(self._ellipsoid_y_label, self._ellipsoid_y)
+        self._size_layout.addRow(self._ellipsoid_z_label, self._ellipsoid_z)
+        
+        # 隐藏所有尺寸控件
+        self._hide_all_size_controls()
+        
+        transform_layout.addWidget(self._size_group)
+        self._form_layout.addRow(transform_group)
+        
+        # 保留原来的缩放控件，但隐藏它们，用于兼容后端逻辑
         self._scale_x = self._create_double_spinbox("scale_x", 0.01, 100.0, 0.1)
         self._scale_y = self._create_double_spinbox("scale_y", 0.01, 100.0, 0.1)
         self._scale_z = self._create_double_spinbox("scale_z", 0.01, 100.0, 0.1)
+        self._scale_x.hide()
+        self._scale_y.hide()
+        self._scale_z.hide()
+    
+    def _hide_all_size_controls(self):
+        """隐藏所有尺寸控件"""
+        # 立方体
+        self._box_size_x.hide()
+        self._box_size_y.hide()
+        self._box_size_z.hide()
+        self._box_size_label_x.hide()
+        self._box_size_label_y.hide()
+        self._box_size_label_z.hide()
         
-        # 球体缩放联动控制
-        self._scale_x.valueChanged.connect(self._handle_sphere_scale)
-        self._scale_y.valueChanged.connect(self._handle_sphere_scale)
-        self._scale_z.valueChanged.connect(self._handle_sphere_scale)
+        # 球体
+        self._sphere_radius.hide()
+        self._sphere_radius_label.hide()
         
-        scale_layout.addRow("X:", self._scale_x)
-        scale_layout.addRow("Y:", self._scale_y)
-        scale_layout.addRow("Z:", self._scale_z)
+        # 圆柱体/胶囊体
+        self._cylinder_radius.hide()
+        self._cylinder_length.hide()
+        self._cylinder_radius_label.hide()
+        self._cylinder_length_label.hide()
         
-        scale_group = QGroupBox("缩放")
-        scale_group.setLayout(scale_layout)
-        transform_layout.addWidget(scale_group)
+        # 椭球体
+        self._ellipsoid_x.hide()
+        self._ellipsoid_y.hide()
+        self._ellipsoid_z.hide()
+        self._ellipsoid_x_label.hide()
+        self._ellipsoid_y_label.hide()
+        self._ellipsoid_z_label.hide()
+    
+    def _show_size_controls_for_type(self, geo_type):
+        """根据几何体类型显示相应的尺寸控件"""
+        # 首先隐藏所有控件
+        self._hide_all_size_controls()
         
-        self._form_layout.addRow(transform_group)
+        # 根据类型显示相应控件
+        if geo_type == "box":
+            self._box_size_x.show()
+            self._box_size_y.show()
+            self._box_size_z.show()
+            self._box_size_label_x.show()
+            self._box_size_label_y.show()
+            self._box_size_label_z.show()
+            self._size_group.setTitle("尺寸")
+        elif geo_type == "sphere":
+            self._sphere_radius.show()
+            self._sphere_radius_label.show()
+            self._size_group.setTitle("尺寸")
+        elif geo_type in ["cylinder", "capsule"]:
+            self._cylinder_radius.show()
+            self._cylinder_length.show()
+            self._cylinder_radius_label.show()
+            self._cylinder_length_label.show()
+            self._size_group.setTitle("尺寸")
+        elif geo_type == "ellipsoid":
+            self._ellipsoid_x.show()
+            self._ellipsoid_y.show()
+            self._ellipsoid_z.show()
+            self._ellipsoid_x_label.show()
+            self._ellipsoid_y_label.show()
+            self._ellipsoid_z_label.show()
+            self._size_group.setTitle("尺寸")
+        elif geo_type == "plane":
+            self._size_group.setTitle("尺寸 (不可调整)")
+    
+    def _handle_sphere_radius_change(self, value):
+        """处理球体半径变化"""
+        # 更新隐藏的缩放控件，保持一致性
+        self._scale_x.blockSignals(True)
+        self._scale_y.blockSignals(True)
+        self._scale_z.blockSignals(True)
+        
+        self._scale_x.setValue(value)
+        self._scale_y.setValue(value)
+        self._scale_z.setValue(value)
+        
+        self._scale_x.blockSignals(False)
+        self._scale_y.blockSignals(False)
+        self._scale_z.blockSignals(False)
+        
+        # 发送统一的缩放值
+        self.propertyChanged.emit("scale", [value, value, value])
+    
+    def _handle_cylinder_radius_change(self, value):
+        """处理圆柱体/胶囊体半径变化"""
+        length = self._cylinder_length.value()
+        
+        # 更新隐藏的缩放控件
+        self._scale_x.blockSignals(True)
+        self._scale_y.blockSignals(True)
+        
+        self._scale_x.setValue(value)
+        self._scale_y.setValue(value)
+        
+        self._scale_x.blockSignals(False)
+        self._scale_y.blockSignals(False)
+        
+        # 发送更新的缩放值
+        self.propertyChanged.emit("scale", [value, value, length])
+    
+    def _handle_cylinder_length_change(self, value):
+        """处理圆柱体/胶囊体长度变化"""
+        radius = self._cylinder_radius.value()
+        
+        # 更新隐藏的Z轴缩放控件
+        self._scale_z.blockSignals(True)
+        self._scale_z.setValue(value)
+        self._scale_z.blockSignals(False)
+        
+        # 发送更新的缩放值
+        self.propertyChanged.emit("scale", [radius, radius, value])
     
     def _handle_sphere_scale(self, value):
-        """处理特殊几何体缩放联动"""
-        # 获取当前几何体类型
-        geo_type = self._property_viewmodel.get_property("type")
-        sender = self.sender()
-        
-        # 对不同几何体类型进行特殊处理
-        if geo_type == "sphere":
-            # 球体：三个轴的缩放值保持一致
-            # 阻止递归调用
-            self._scale_x.blockSignals(True)
-            self._scale_y.blockSignals(True)
-            self._scale_z.blockSignals(True)
-            
-            self._scale_x.setValue(value)
-            self._scale_y.setValue(value)
-            self._scale_z.setValue(value)
-            
-            self._scale_x.blockSignals(False)
-            self._scale_y.blockSignals(False)
-            self._scale_z.blockSignals(False)
-            
-            # 发送已修改的属性信号
-            self.propertyChanged.emit("scale", [value, value, value])
-            
-        elif geo_type in ["cylinder", "capsule"]:
-            # 圆柱体和胶囊体：X和Y轴保持一致（半径），Z轴独立（高度）
-            if sender in [self._scale_x, self._scale_y]:
-                # 如果改变的是X或Y（半径），则保持X和Y相同
-                self._scale_x.blockSignals(True)
-                self._scale_y.blockSignals(True)
-                
-                radius = value
-                self._scale_x.setValue(radius)
-                self._scale_y.setValue(radius)
-                
-                self._scale_x.blockSignals(False)
-                self._scale_y.blockSignals(False)
-                
-                # 获取当前高度
-                height = self._scale_z.value()
-                
-                # 更新缩放
-                self.propertyChanged.emit("scale", [radius, radius, height])
+        """原有的处理特殊几何体缩放联动"""
+        # 保留此方法以兼容现有逻辑，但不再使用
+        pass
     
     def _create_geometry_group(self):
         """创建几何属性组"""
@@ -182,9 +291,10 @@ class PropertyView(QWidget):
         self._geometry_type = QComboBox()
         for geo_type in GeometryType:
             self._geometry_type.addItem(geo_type.name, geo_type.value)
-        self._geometry_type.currentIndexChanged.connect(
-            lambda: self.propertyChanged.emit("type", self._geometry_type.currentData())
-        )
+        
+        # 修改连接方式，增加处理逻辑
+        self._geometry_type.currentIndexChanged.connect(self._on_geometry_type_changed)
+        
         geometry_layout.addRow("类型:", self._geometry_type)
         
         # 名称
@@ -202,6 +312,35 @@ class PropertyView(QWidget):
         geometry_layout.addRow("", self._visibility)
         
         self._form_layout.addRow(geometry_group)
+    
+    def _on_geometry_type_changed(self):
+        """处理几何体类型变化"""
+        # 获取新的几何体类型
+        geo_type = self._geometry_type.currentData()
+        
+        # 发送类型变更信号
+        self.propertyChanged.emit("type", geo_type)
+        
+        # 更新尺寸控件
+        self._show_size_controls_for_type(geo_type)
+        
+        # 根据几何体类型设置默认尺寸
+        scale = None
+        
+        if geo_type == "sphere":
+            # 球体默认尺寸 - 统一半径
+            radius = self._scale_x.value()  # 使用当前X值作为半径
+            scale = [radius, radius, radius]
+            
+        elif geo_type in ["cylinder", "capsule"]:
+            # 圆柱体/胶囊体默认尺寸 - 统一XY作为半径
+            radius = self._scale_x.value()  # 使用当前X值作为半径
+            length = self._scale_z.value()  # 使用当前Z值作为长度
+            scale = [radius, radius, length]
+        
+        # 如果有默认尺寸，发送更新
+        if scale:
+            self.propertyChanged.emit("scale", scale)
     
     def _create_material_group(self):
         """创建材质属性组"""
@@ -344,9 +483,21 @@ class PropertyView(QWidget):
             self._rotation_y.blockSignals(False)
             self._rotation_z.blockSignals(False)
         
-        # 更新缩放
+        # 更新几何类型
+        geo_type = self._property_viewmodel.get_property("type")
+        if geo_type is not None:
+            self._geometry_type.blockSignals(True)
+            index = self._geometry_type.findData(geo_type)
+            self._geometry_type.setCurrentIndex(index if index >= 0 else 0)
+            self._geometry_type.blockSignals(False)
+            
+            # 根据几何体类型显示对应的尺寸控件
+            self._show_size_controls_for_type(geo_type)
+        
+        # 更新缩放/尺寸值
         scale = self._property_viewmodel.get_property("scale")
         if scale is not None:
+            # 同时更新隐藏的缩放控件
             self._scale_x.blockSignals(True)
             self._scale_y.blockSignals(True)
             self._scale_z.blockSignals(True)
@@ -358,14 +509,48 @@ class PropertyView(QWidget):
             self._scale_x.blockSignals(False)
             self._scale_y.blockSignals(False)
             self._scale_z.blockSignals(False)
-        
-        # 更新几何类型
-        geo_type = self._property_viewmodel.get_property("type")
-        if geo_type is not None:
-            self._geometry_type.blockSignals(True)
-            index = self._geometry_type.findData(geo_type)
-            self._geometry_type.setCurrentIndex(index if index >= 0 else 0)
-            self._geometry_type.blockSignals(False)
+            
+            # 根据几何体类型更新对应的尺寸控件
+            if geo_type == "box":
+                self._box_size_x.blockSignals(True)
+                self._box_size_y.blockSignals(True)
+                self._box_size_z.blockSignals(True)
+                
+                self._box_size_x.setValue(scale[0])
+                self._box_size_y.setValue(scale[1])
+                self._box_size_z.setValue(scale[2])
+                
+                self._box_size_x.blockSignals(False)
+                self._box_size_y.blockSignals(False)
+                self._box_size_z.blockSignals(False)
+            
+            elif geo_type == "sphere":
+                self._sphere_radius.blockSignals(True)
+                self._sphere_radius.setValue(scale[0])  # 使用X值作为半径
+                self._sphere_radius.blockSignals(False)
+            
+            elif geo_type in ["cylinder", "capsule"]:
+                self._cylinder_radius.blockSignals(True)
+                self._cylinder_length.blockSignals(True)
+                
+                self._cylinder_radius.setValue(scale[0])  # 使用X值作为半径
+                self._cylinder_length.setValue(scale[2])  # 使用Z值作为长度
+                
+                self._cylinder_radius.blockSignals(False)
+                self._cylinder_length.blockSignals(False)
+            
+            elif geo_type == "ellipsoid":
+                self._ellipsoid_x.blockSignals(True)
+                self._ellipsoid_y.blockSignals(True)
+                self._ellipsoid_z.blockSignals(True)
+                
+                self._ellipsoid_x.setValue(scale[0])
+                self._ellipsoid_y.setValue(scale[1])
+                self._ellipsoid_z.setValue(scale[2])
+                
+                self._ellipsoid_x.blockSignals(False)
+                self._ellipsoid_y.blockSignals(False)
+                self._ellipsoid_z.blockSignals(False)
         
         # 更新可见性
         visible = self._property_viewmodel.get_property("visible")

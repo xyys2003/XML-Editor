@@ -186,7 +186,7 @@ class BaseGeometry:
     def _update_transform(self):
         """更新变换矩阵"""
         # 使用scipy的Rotation创建旋转矩阵，注意使用角度制
-        rot_3x3 = R.from_euler('xyz', self.rotation, degrees=True).as_matrix()
+        rot_3x3 = R.from_euler('XYZ', self.rotation, degrees=True).as_matrix()
         translation_matrix = np.eye(4)
         translation_matrix[:3, 3] = self.position
         translation_matrix[:3, :3] = rot_3x3
