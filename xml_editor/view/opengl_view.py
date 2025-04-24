@@ -85,7 +85,13 @@ class OpenGLView(QOpenGLWidget):
         # 射线投射器
         self._controllor_raycaster = None
         self._controller_geometries = []
-    
+        
+        # 启用拖拽功能
+        self.setAcceptDrops(True)
+        
+        # 拖拽预览数据
+        self.drag_preview = {'active': False, 'position': None, 'type': None}
+
     def minimumSizeHint(self):
         """返回建议的最小尺寸"""
         return QSize(200, 150)
@@ -155,6 +161,12 @@ class OpenGLView(QOpenGLWidget):
         if selected_geo and self._scene_viewmodel.operation_mode != OperationMode.OBSERVE and selected_geo.visible:
             glDisable(GL_DEPTH_TEST)
             self._draw_transform_controller(selected_geo)
+            glEnable(GL_DEPTH_TEST)
+        
+        # 在最后绘制拖拽预览
+        if self.drag_preview['active'] and self.drag_preview['position'] is not None:
+            glDisable(GL_DEPTH_TEST)
+            self._draw_drag_preview()
             glEnable(GL_DEPTH_TEST)
     
     def _update_projection(self, width, height):
@@ -344,9 +356,11 @@ class OpenGLView(QOpenGLWidget):
         elif geometry.type == GeometryType.CYLINDER.value:
             self._draw_cylinder(geometry.size[0], geometry.size[2])
         elif geometry.type == GeometryType.CAPSULE.value:
-            self._draw_capsule(geometry.size[0], geometry.size[2])
+            self._draw_capsule(geometry.size[0], geometry.size[1])
         elif geometry.type == GeometryType.PLANE.value:
             self._draw_plane()
+        elif geometry.type == GeometryType.ELLIPSOID.value:
+            self._draw_ellipsoid(geometry.size[0], geometry.size[1], geometry.size[2])
         else:
             # 默认使用立方体
             self._draw_box(geometry.size[0], geometry.size[1], geometry.size[2])
@@ -354,7 +368,8 @@ class OpenGLView(QOpenGLWidget):
         # 如果被选中，绘制包围盒
         if selected:
             if geometry.type == GeometryType.CAPSULE.value:
-                self._draw_wireframe_cube(geometry.size[0], geometry.size[1], geometry.size[2]+geometry.size[0], highlight=True)
+                # 胶囊体的包围盒需要考虑半球部分
+                self._draw_wireframe_cube(geometry.size[0], geometry.size[0], geometry.size[1]*2 + geometry.size[0]*2, highlight=True)
             else:
                 self._draw_wireframe_cube(geometry.size[0], geometry.size[1], geometry.size[2], highlight=True)
         
@@ -505,83 +520,102 @@ class OpenGLView(QOpenGLWidget):
     def _draw_box(self, x, y, z):
         """绘制立方体"""
         glPushMatrix()
+        
+        # Mujoco 风格调整，大小是半长半宽半高
+        mujoco_size = (x*2, y*2, z*2)
+        
+        # 使用缩放将单位立方体调整为所需大小
         glScalef(x, y, z)
-        glutSolidCube(2.0)
-
+        glutSolidCube(2.0)  # 使用2.0单位立方体以匹配Mujoco尺寸规范
+        
         glPopMatrix()
     
     def _draw_sphere(self, radius):
         """绘制球体"""
         glPushMatrix()
-        sphere_radius = radius
-        sphere_slices = 20
-        sphere_stacks = 20
-        glutSolidSphere(sphere_radius, sphere_slices, sphere_stacks)
+        
+        # 直接使用半径
+        glutSolidSphere(radius, 32, 32)
+        
         glPopMatrix()
     
     def _draw_cylinder(self, radius, height):
         """绘制圆柱体"""
-        cylinder_radius = radius
-        cylinder_height = height * 2.0
-        cylinder_slices = 20
-        cylinder_stacks = 1
-
         glPushMatrix()
-        glTranslatef(0.0, 0.0, -cylinder_height/2.0)
-
-        gluCylinder(
-            gluNewQuadric(),      # 二次曲面对象
-            cylinder_radius,      # 底部半径
-            cylinder_radius,      # 顶部半径
-            cylinder_height,      # 高度
-            cylinder_slices,      # 径向细分
-            cylinder_stacks       # 高度细分
-        )
+        
+        # Mujoco风格，绕X轴旋转90度使Z轴朝上
+        glRotatef(90, 1, 0, 0)
+        
+        # 创建二次曲面对象
+        quad = gluNewQuadric()
+        
+        # 绘制圆柱体
+        cylinder_height = height * 2.0  # 全高
+        gluCylinder(quad, radius, radius, cylinder_height, 32, 32)
         
         # 绘制底部和顶部圆盖
-        gluDisk(gluNewQuadric(), 0.0, cylinder_radius, cylinder_slices, 1)
+        gluDisk(quad, 0, radius, 32, 32)
         
-        glTranslatef(0.0, 0.0, cylinder_height)
-        gluDisk(gluNewQuadric(), 0.0, cylinder_radius, cylinder_slices, 1)
+        glTranslatef(0, 0, cylinder_height)
+        gluDisk(quad, 0, radius, 32, 32)
+        
+        # 删除二次曲面对象
+        gluDeleteQuadric(quad)
         
         glPopMatrix()
     
     def _draw_capsule(self, radius, height):
-        """绘制胶囊体（简化为圆柱和两个半球）"""
+        """绘制胶囊体（圆柱+两个半球）"""
         glPushMatrix()
-        capsule_radius = radius
-        capsule_height = height * 2.0
-        capsule_slices = 20
-        capsule_stacks = 1
-
-        glTranslatef(0.0, 0.0, -capsule_height/2.0)
-
-        if capsule_height > 0:
-            # 绘制中间圆柱部分
-            gluCylinder(
-                gluNewQuadric(),      # 二次曲面对象
-                capsule_radius,       # 底部半径
-                capsule_radius,       # 顶部半径
-                capsule_height,       # 高度
-                capsule_slices,       # 径向细分
-                capsule_stacks        # 高度细分
-            )
         
-        # 绘制底部半球
-        sphere_stacks = 10
-        gluSphere(gluNewQuadric(), capsule_radius, capsule_slices, sphere_stacks)
+        # 创建二次曲面对象
+        quad = gluNewQuadric()
         
-        # 绘制顶部半球
-        glTranslatef(0.0, 0.0, capsule_height)
-        gluSphere(gluNewQuadric(), capsule_radius, capsule_slices, sphere_stacks)
+        # 半高
+        half_height = height
+        
+        # 绘制圆柱体部分（沿Z轴，中心位于原点）
+        glPushMatrix()
+        glTranslatef(0, 0, -half_height)  # 移动到圆柱体底部
+        gluCylinder(quad, radius, radius, 2 * half_height, 32, 32)
+        glPopMatrix()
+        
+        # 绘制底部半球（位于圆柱体底部）
+        glPushMatrix()
+        glTranslatef(0, 0, -half_height)  # 移动到圆柱体底部
+        glRotatef(180, 1, 0, 0)  # 旋转使半球朝向-Z方向
+        gluSphere(quad, radius, 32, 32)
+        glPopMatrix()
+        
+        # 绘制顶部半球（位于圆柱体顶部）
+        glPushMatrix()
+        glTranslatef(0, 0, half_height)  # 移动到圆柱体顶部
+        gluSphere(quad, radius, 32, 32)
+        glPopMatrix()
+        
+        # 删除二次曲面对象
+        gluDeleteQuadric(quad)
         
         glPopMatrix()
     
     def _draw_plane(self):
         """绘制平面"""
         glPushMatrix()
-        glScalef(1.0, 1.0, 0.01)  # 使平面非常薄
+        
+        # 水平平面，非常薄的立方体
+        glScalef(1.0, 0.01, 1.0)
         glutSolidCube(2.0)
+        
+        glPopMatrix()
+    
+    def _draw_ellipsoid(self, x_radius, y_radius, z_radius):
+        """绘制椭球体"""
+        glPushMatrix()
+        
+        # 使用缩放将球体变形为椭球体
+        glScalef(x_radius, y_radius, z_radius)
+        glutSolidSphere(1.0, 32, 32)
+        
         glPopMatrix()
     
     def _draw_wireframe_cube(self, x, y, z, highlight=False):
@@ -1198,3 +1232,271 @@ class OpenGLView(QOpenGLWidget):
         
         # 恢复矩阵
         glPopMatrix() 
+
+    def dragEnterEvent(self, event):
+        """处理拖拽进入事件"""
+        if event.mimeData().hasText():
+            # 接受拖拽
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        """处理拖拽移动事件"""
+        if not event.mimeData().hasText():
+            event.ignore()
+            return
+        
+        try:
+            # 获取几何体类型值
+            geo_type_text = event.mimeData().text()
+            print(f"拖拽类型: '{geo_type_text}'，类型: {type(geo_type_text)}")
+            
+            # 获取当前鼠标位置
+            mouse_pos = event.pos()
+            
+            # 计算世界位置
+            world_pos = self._get_position_at_mouse(mouse_pos)
+            
+            # 更新预览状态
+            self.drag_preview = {
+                'active': True,
+                'position': world_pos,
+                'type': geo_type_text
+            }
+            
+            # 重绘界面
+            self.update()
+            
+            # 接受拖拽
+            event.acceptProposedAction()
+        except Exception as e:
+            print(f"拖拽移动处理出错: {e}")
+            import traceback
+            traceback.print_exc()
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        """处理拖拽离开事件"""
+        # 清除预览
+        self.drag_preview = {'active': False, 'position': None, 'type': None}
+        self.update()
+        event.accept()
+
+    def dropEvent(self, event):
+        """处理拖拽放置事件"""
+        if not event.mimeData().hasText():
+            event.ignore()
+            return
+        
+        try:
+            # 获取几何体类型值（字符串）
+            geo_type_value = event.mimeData().text()
+            
+            # 获取放置位置
+            mouse_pos = event.pos()
+            world_pos = self._get_position_at_mouse(mouse_pos)
+            
+            # 创建几何体
+            self._create_geometry_at_position(geo_type_value, world_pos)
+            
+            # 清除预览
+            self.drag_preview = {'active': False, 'position': None, 'type': None}
+            self.update()
+            
+            # 接受拖拽
+            event.acceptProposedAction()
+        except Exception as e:
+            print(f"拖拽放置处理出错: {e}")
+            event.ignore()
+
+    def _get_position_at_mouse(self, mouse_pos):
+        """
+        获取鼠标位置对应的世界坐标
+        
+        参数:
+            mouse_pos: 鼠标位置(QPoint)
+            
+        返回:
+            世界坐标(numpy数组)
+        """
+        try:
+            # 获取视口尺寸
+            viewport_width = self.width()
+            viewport_height = self.height()
+            
+            # 获取射线
+            ray_origin, ray_direction = self._get_mouse_ray(mouse_pos.x(), mouse_pos.y(), viewport_width, viewport_height)
+            
+            # 使用场景视图模型的射线投射器检测与几何体的交点
+            result = self._scene_viewmodel._raycaster.raycast(mouse_pos.x(), mouse_pos.y(), viewport_width, viewport_height)
+            
+            if result and result.is_hit():
+                # 如果射线击中了几何体，使用击中点
+                # RaycastResult 类使用 hit_point 而不是 hit_position
+                if hasattr(result, 'hit_point'):
+                    # 将位置稍微提高，避免与现有物体重叠
+                    return result.hit_point + np.array([0.0, 0.2, 0.0])
+                
+                # 如果没有hit_point，可以尝试使用距离计算击中点
+                if hasattr(result, 'distance'):
+                    hit_point = ray_origin + ray_direction * result.distance
+                    return hit_point + np.array([0.0, 0.2, 0.0])
+                
+                # 如果上述方法都失败，从几何体获取位置
+                if hasattr(result, 'geometry') and hasattr(result.geometry, 'get_world_position'):
+                    geometry_pos = result.geometry.get_world_position()
+                    # 将位置稍微提高，避免与现有物体重叠
+                    return geometry_pos + np.array([0.0, result.geometry.size[1] if hasattr(result.geometry, 'size') else 0.5, 0.0])
+            
+            # 如果没有击中几何体，计算与y=0平面的交点
+            if ray_direction[1] != 0:
+                t = -ray_origin[1] / ray_direction[1]
+                if t > 0:
+                    # 计算交点
+                    intersection = ray_origin + t * ray_direction
+                    return intersection
+            
+            # 默认返回原点
+            return np.array([0.0, 0.0, 0.0])
+        
+        except Exception as e:
+            print(f"获取鼠标位置出错: {e}")
+            import traceback
+            traceback.print_exc()
+            # 发生错误时返回安全的默认值
+            return np.array([0.0, 0.0, 0.0])
+
+    def _get_mouse_ray(self, x, y, viewport_width, viewport_height):
+        """
+        获取从鼠标位置发射的射线
+        
+        参数:
+            x, y: 鼠标坐标
+            viewport_width, viewport_height: 视口尺寸
+            
+        返回:
+            (ray_origin, ray_direction): 射线起点和方向
+        """
+        # 使用场景视图模型的坐标转换方法
+        return self._scene_viewmodel.screen_to_world_ray(x, y, viewport_width, viewport_height)
+
+    def _create_geometry_at_position(self, geo_type_value, position):
+        """
+        在指定位置创建几何体
+        
+        参数:
+            geo_type_value: 几何体类型值（字符串）
+            position: 位置坐标
+        """
+        try:
+            # 将字符串值转换为GeometryType枚举
+            geo_type = None
+            
+            # 遍历所有几何体类型，找到匹配的值
+            for gt in GeometryType:
+                if gt.value == geo_type_value:
+                    geo_type = gt
+                    break
+            
+            # 如果没有找到匹配的枚举值，打印错误并返回
+            if geo_type is None:
+                print(f"错误：无效的几何体类型值 '{geo_type_value}'")
+                print(f"有效的几何体类型值: {[gt.value for gt in GeometryType]}")
+                return
+            
+            # 为不同几何体类型设置默认尺寸
+            default_sizes = {
+                GeometryType.BOX: (0.5, 0.5, 0.5),
+                GeometryType.SPHERE: (0.5, 0.5, 0.5),
+                GeometryType.CYLINDER: (0.5, 0.5, 0.5),
+                GeometryType.PLANE: (1.0, 0.01, 1.0),
+                GeometryType.CAPSULE: (0.5, 0.5, 0.5),
+                GeometryType.ELLIPSOID: (0.5, 0.3, 0.5)
+            }
+            
+            # 创建几何体
+            geometry = self._scene_viewmodel.create_geometry(
+                geo_type=geo_type,
+                position=tuple(position),
+                size=default_sizes.get(geo_type, (0.5, 0.5, 0.5))
+            )
+            
+            # 选中新创建的几何体
+            if geometry:
+                self._scene_viewmodel.selected_geometry = geometry
+                
+                # 如果当前是观察模式，切换到平移模式
+                if self._scene_viewmodel.operation_mode == OperationMode.OBSERVE:
+                    self._scene_viewmodel.operation_mode = OperationMode.TRANSLATE
+        
+        except Exception as e:
+            print(f"创建几何体出错: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _draw_drag_preview(self):
+        """绘制拖拽预览"""
+        if not self.drag_preview['active'] or self.drag_preview['position'] is None:
+            return
+        
+        position = self.drag_preview['position']
+        geo_type_value = self.drag_preview['type']
+        
+        try:
+            # 转换为GeometryType枚举
+            geo_type = None
+            
+            # 遍历所有几何体类型，找到匹配的值
+            for gt in GeometryType:
+                if gt.value == geo_type_value:
+                    geo_type = gt
+                    break
+            
+            # 如果没有找到匹配的枚举值，返回
+            if geo_type is None:
+                print(f"预览错误：无效的几何体类型值 '{geo_type_value}'")
+                return
+            
+            # 保存当前状态
+            glPushMatrix()
+            
+            # 半透明蓝色
+            glColor4f(0.2, 0.5, 1.0, 0.5)
+            
+            # 移动到预览位置
+            glTranslatef(position[0], position[1], position[2])
+            
+            # 为不同几何体类型设置默认尺寸
+            default_sizes = {
+                GeometryType.BOX: (0.5, 0.5, 0.5),
+                GeometryType.SPHERE: (0.5, 0.5, 0.5),
+                GeometryType.CYLINDER: (0.5, 0.5, 0.5),
+                GeometryType.PLANE: (1.0, 0.01, 1.0),
+                GeometryType.CAPSULE: (0.5, 0.5, 0.5),
+                GeometryType.ELLIPSOID: (0.5, 0.3, 0.5)
+            }
+            
+            # 获取默认尺寸
+            size = default_sizes.get(geo_type, (0.5, 0.5, 0.5))
+            
+            # 根据几何体类型绘制
+            if geo_type == GeometryType.BOX:
+                self._draw_box(size[0], size[1], size[2])
+            elif geo_type == GeometryType.SPHERE:
+                self._draw_sphere(size[0])
+            elif geo_type == GeometryType.CYLINDER:
+                self._draw_cylinder(size[0], size[2])
+            elif geo_type == GeometryType.CAPSULE:
+                self._draw_capsule(size[0], size[1])
+            elif geo_type == GeometryType.PLANE:
+                self._draw_plane()
+            elif geo_type == GeometryType.ELLIPSOID:
+                self._draw_ellipsoid(size[0], size[1], size[2])
+            
+            # 恢复状态
+            glPopMatrix()
+        except Exception as e:
+            print(f"绘制预览出错: {e}")
+            import traceback
+            traceback.print_exc() 

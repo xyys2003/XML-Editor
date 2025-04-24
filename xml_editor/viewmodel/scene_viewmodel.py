@@ -371,4 +371,62 @@ class SceneViewModel(QObject):
         self.objectChanged.emit(obj)
         
         # 同时发出几何体列表变化信号，更新视图
-        self.geometriesChanged.emit() 
+        self.geometriesChanged.emit()
+    
+    def screen_to_world_ray(self, screen_x, screen_y, viewport_width, viewport_height):
+        """
+        从屏幕坐标计算世界空间射线
+        
+        参数:
+            screen_x, screen_y: 屏幕坐标
+            viewport_width, viewport_height: 视口尺寸
+            
+        返回:
+            (ray_origin, ray_direction): 射线起点和方向
+        """
+        # 转换为归一化设备坐标(NDC)
+        ndc_x = (2.0 * screen_x / viewport_width) - 1.0
+        ndc_y = 1.0 - (2.0 * screen_y / viewport_height)  # Y轴方向翻转
+        
+        # 获取近平面和远平面上的点
+        near_point = self.unproject_point(ndc_x, ndc_y, 0.0)
+        far_point = self.unproject_point(ndc_x, ndc_y, 1.0)
+        
+        # 射线起点(相机位置)
+        ray_origin = np.array(self._camera_config['position'])
+        
+        # 射线方向
+        ray_direction = np.array(far_point) - np.array(near_point)
+        ray_direction = ray_direction / np.linalg.norm(ray_direction)  # 归一化
+        
+        return (ray_origin, ray_direction)
+    
+    def unproject_point(self, ndc_x, ndc_y, ndc_z):
+        """
+        将归一化设备坐标转换为世界坐标
+        
+        参数:
+            ndc_x, ndc_y, ndc_z: 归一化设备坐标(范围[-1,1])
+            
+        返回:
+            世界坐标(x, y, z)
+        """
+        # 获取投影和视图矩阵
+        proj_matrix = self._camera_config['projection_matrix']
+        view_matrix = self._camera_config['view_matrix']
+        
+        # 计算视图投影矩阵的逆矩阵
+        view_proj = np.matmul(proj_matrix, view_matrix)
+        inv_view_proj = np.linalg.inv(view_proj)
+        
+        # 将NDC坐标转换为齐次裁剪空间坐标
+        clip_coords = np.array([ndc_x, ndc_y, ndc_z, 1.0])
+        
+        # 应用逆矩阵转换为世界坐标
+        world_coords = np.matmul(inv_view_proj, clip_coords)
+        
+        # 透视除法
+        if world_coords[3] != 0:
+            world_coords = world_coords / world_coords[3]
+        
+        return world_coords[:3] 

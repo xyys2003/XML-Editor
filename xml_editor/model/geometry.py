@@ -261,3 +261,8 @@ class TriangleGeometry(Geometry):
     def __init__(self, name="Triangle", position=(0, 0, 0), 
                  size=(1, 1, 1), rotation=(0, 0, 0), parent=None):
         super().__init__(GeometryType.TRIANGLE.value, name, position, size, rotation, parent) 
+
+# 打印这里的实际值
+print("有效的几何体类型：")
+for geo_type in GeometryType:
+    print(f"  {geo_type.name}: {geo_type.value}") 

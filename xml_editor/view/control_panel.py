@@ -5,9 +5,10 @@
 """
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                           QGroupBox, QRadioButton, QComboBox, QLabel, 
-                           QButtonGroup, QToolButton, QGridLayout)
-from PyQt5.QtCore import Qt
+                          QGroupBox, QRadioButton, QComboBox, QLabel, 
+                          QButtonGroup, QToolButton, QGridLayout)
+from PyQt5.QtCore import Qt, QMimeData
+from PyQt5.QtGui import QDrag, QPixmap
 
 from ..model.geometry import OperationMode, GeometryType
 
@@ -34,6 +35,11 @@ class ControlPanel(QWidget):
         
         # 创建UI
         self._init_ui()
+        
+        # 打印枚举值信息
+        print("有效的几何体类型：")
+        for geo_type in GeometryType:
+            print(f"  {geo_type.name}: {geo_type.value}")
     
     def _init_ui(self):
         """初始化用户界面"""
@@ -97,51 +103,81 @@ class ControlPanel(QWidget):
             parent_layout: 父布局
         """
         geometry_group = QGroupBox("创建几何体")
-        geometry_layout = QVBoxLayout(geometry_group)
+        geometry_layout = QGridLayout(geometry_group)
         geometry_layout.setContentsMargins(4, 4, 4, 4)
         geometry_layout.setSpacing(6)
         
-        # 几何体类型选择
-        type_layout = QHBoxLayout()
-        type_layout.addWidget(QLabel("类型:"))
+        # 使用枚举的字符串值 - 第一行
+        self._create_box_button = self._create_draggable_button("立方体", GeometryType.BOX.value, geometry_layout, 0, 0)
+        self._create_sphere_button = self._create_draggable_button("球体", GeometryType.SPHERE.value, geometry_layout, 0, 1)
         
-        self._geometry_type = QComboBox()
-        for geo_type in GeometryType:
-            self._geometry_type.addItem(geo_type.name, geo_type.value)
+        # 第二行
+        self._create_cylinder_button = self._create_draggable_button("圆柱", GeometryType.CYLINDER.value, geometry_layout, 1, 0)
+        self._create_plane_button = self._create_draggable_button("平面", GeometryType.PLANE.value, geometry_layout, 1, 1)
         
-        type_layout.addWidget(self._geometry_type)
-        geometry_layout.addLayout(type_layout)
+        # 第三行 - 添加胶囊体和椭球体按钮
+        self._create_capsule_button = self._create_draggable_button("胶囊体", GeometryType.CAPSULE.value, geometry_layout, 2, 0)
+        self._create_ellipsoid_button = self._create_draggable_button("椭球体", GeometryType.ELLIPSOID.value, geometry_layout, 2, 1)
         
-        # 创建按钮
-        create_button = QPushButton("创建")
-        create_button.clicked.connect(self._on_create_geometry)
-        geometry_layout.addWidget(create_button)
+        # 添加提示标签
+        hint_label = QLabel("提示：拖拽几何体到场景中创建")
+        hint_label.setAlignment(Qt.AlignCenter)
+        geometry_layout.addWidget(hint_label, 3, 0, 1, 2)
         
         parent_layout.addWidget(geometry_group)
     
-    def _create_mode_button(self, text, icon_name=None):
+    def _create_draggable_button(self, text, geo_type_value, layout, row, col):
         """
-        创建模式按钮
+        创建可拖拽的几何体按钮
         
         参数:
             text: 按钮文本
-            icon_name: 图标名称（可选）
+            geo_type_value: 几何体类型值
+            layout: 父布局
+            row: 行位置
+            col: 列位置
             
         返回:
             创建的按钮
         """
-        button = QToolButton()
-        button.setText(text)
-        button.setCheckable(True)
-        button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        button = QPushButton(text)
+        button.setProperty("geo_type", geo_type_value)
+        print(f"创建按钮 '{text}' 的几何体类型: '{geo_type_value}'，类型: {type(geo_type_value)}")
+        layout.addWidget(button, row, col)
         
-        # 如果有图标，设置图标
-        if icon_name:
-            # 这里假设有一个图标资源，实际项目中需要替换为实际的图标路径
-            # button.setIcon(QIcon(f":/icons/{icon_name}.png"))
-            pass
+        # 启用鼠标跟踪以实现拖拽
+        button.mousePressEvent = lambda event, btn=button: self._start_drag(event, btn)
         
         return button
+    
+    def _start_drag(self, event, button):
+        """
+        开始拖拽操作
+        
+        参数:
+            event: 鼠标事件
+            button: 触发拖拽的按钮
+        """
+        if event.button() == Qt.LeftButton:
+            # 获取几何体类型值
+            geo_type_value = button.property("geo_type")
+            
+            # 创建拖拽对象
+            drag = QDrag(button)
+            mime_data = QMimeData()
+            
+            # 存储几何体类型值（无需转换为字符串形式）
+            mime_data.setText(geo_type_value)
+            drag.setMimeData(mime_data)
+            
+            # 创建拖拽预览图像
+            pixmap = QPixmap(button.size())
+            button.render(pixmap)
+            drag.setPixmap(pixmap)
+            drag.setHotSpot(event.pos())
+            
+            # 执行拖拽操作
+            drag.exec_(Qt.CopyAction)
     
     def _on_operation_mode_changed(self, button):
         """
@@ -155,15 +191,6 @@ class ControlPanel(QWidget):
         
         # 更新视图模型的操作模式
         self._control_viewmodel.operation_mode = operation_mode
-    
-    def _on_create_geometry(self):
-        """处理几何体创建请求"""
-        # 获取选中的几何体类型
-        type_value = self._geometry_type.currentData()
-        geometry_type = GeometryType(type_value)
-        
-        # 调用视图模型创建几何体
-        self._control_viewmodel._scene_viewmodel.create_geometry(geometry_type)
     
     def _update_operation_buttons(self, operation_mode):
         """

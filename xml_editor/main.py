@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
         
         # 重置视图
         reset_view_action = QAction("重置视图", self)
-        reset_view_action.triggered.connect(self.opengl_view.reset_camera)
+        reset_view_action.triggered.connect(self._reset_all_views)
         view_menu.addAction(reset_view_action)
         
         # 帮助菜单
@@ -272,6 +272,37 @@ class MainWindow(QMainWindow):
             "MuJoCo场景编辑器 v0.1.0\n\n"
             "一个用于创建和编辑MuJoCo场景的图形界面工具。"
         )
+    
+    def _reset_all_views(self):
+        """重置所有视图"""
+        # 重置3D视图
+        self.opengl_view.reset_camera()
+        
+        # 重置并确保属性面板可见
+        self.property_viewmodel.reset_properties()
+        
+        # 检查属性面板是否存在并可见，如果不可见则重新创建
+        for dock in self.findChildren(QDockWidget):
+            if dock.windowTitle() == "属性":
+                if not dock.isVisible():
+                    # 如果属性面板被关闭，重新显示它
+                    dock.setVisible(True)
+                    dock.raise_()
+                break
+        else:
+            # 如果没有找到属性面板，重新创建
+            self._recreate_property_panel()
+        
+        # 通知状态栏
+        self.statusBar().showMessage("已重置所有视图")
+    
+    def _recreate_property_panel(self):
+        """重新创建属性面板"""
+        # 创建新的属性面板
+        property_dock = QDockWidget("属性", self)
+        property_dock.setWidget(self.property_panel)
+        property_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.addDockWidget(Qt.RightDockWidgetArea, property_dock)
     
     def closeEvent(self, event):
         """窗口关闭事件"""

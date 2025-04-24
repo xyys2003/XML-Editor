@@ -189,4 +189,16 @@ class PropertyViewModel(QObject):
         
         # 通知场景模型对象已更改
         self._scene_model.notify_object_changed(self._selected_object)
-        return True 
+        return True
+    
+    def reset_properties(self):
+        """
+        重置属性面板
+        
+        清空当前选择并刷新属性面板
+        """
+        # 清除当前选择
+        self._selected_object = None
+        
+        # 通知视图刷新
+        self.propertiesChanged.emit() 
