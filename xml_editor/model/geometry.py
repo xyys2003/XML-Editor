@@ -150,38 +150,23 @@ class BaseGeometry:
             child.parent = None
     
     def _update_aabb(self):
-        """更新轴对齐包围盒"""
-        if not hasattr(self, 'position') or not hasattr(self, 'size'):
-            return
-        
-        # 不同几何体类型的包围盒计算略有不同
-        if self.type == GeometryType.SPHERE.value:
-            # 球体 - 使用半径作为 AABB 尺寸
-            radius = self.size[0]
-            self.aabb_min = self.position - radius
-            self.aabb_max = self.position + radius
-        elif self.type == GeometryType.ELLIPSOID.value:
-            # 椭球体 - 使用三个方向的半径
-            self.aabb_min = self.position - self.size
-            self.aabb_max = self.position + self.size
-        elif self.type == GeometryType.CAPSULE.value:
-            # 胶囊体 - 使用半径和半高度计算
-            radius = self.size[0]
-            height = self.size[2]
-            self.aabb_min = self.position - np.array([radius, radius, height+radius])
-            self.aabb_max = self.position + np.array([radius, radius, height+radius])
-        else:
-            # 其他几何体 - 使用半尺寸计算
-            # 考虑旋转的影响（简化处理）
-            if np.any(self.rotation):
-                # 有旋转时，使用最大半尺寸作为边界
-                max_half_size = np.max(self.size)
-                self.aabb_min = self.position - max_half_size
-                self.aabb_max = self.position + max_half_size
+        """更新几何体的轴对齐包围盒"""
+        # 将 size 转换为与 position 相同的形状
+        size_array = np.array(self.size)
+        if size_array.shape != self.position.shape:
+            # 如果维度不匹配，进行填充或截断
+            if len(size_array) < len(self.position):
+                # 如果 size 维度不足，填充到与 position 相同的维度
+                padded_size = np.zeros_like(self.position)
+                padded_size[:len(size_array)] = size_array
+                size_array = padded_size
             else:
-                # 无旋转时，直接使用半尺寸
-                self.aabb_min = self.position - self.size
-                self.aabb_max = self.position + self.size
+                # 如果 size 维度过多，截断到与 position 相同的维度
+                size_array = size_array[:len(self.position)]
+        
+        # 计算 AABB
+        self.aabb_min = self.position - size_array
+        self.aabb_max = self.position + size_array
     
     def _update_transform(self):
         """更新变换矩阵"""

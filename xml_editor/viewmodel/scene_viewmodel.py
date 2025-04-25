@@ -429,4 +429,25 @@ class SceneViewModel(QObject):
         if world_coords[3] != 0:
             world_coords = world_coords / world_coords[3]
         
-        return world_coords[:3] 
+        return world_coords[:3]
+    
+    def get_geometry_at(self, screen_x, screen_y, viewport_width, viewport_height):
+        """
+        获取指定屏幕坐标处的几何体，但不改变选择状态
+        
+        参数:
+            screen_x, screen_y: 屏幕坐标
+            viewport_width, viewport_height: 视口尺寸
+            
+        返回:
+            几何体对象或None
+        """
+        # 使用射线投射器进行检测
+        result = self._raycaster.raycast(screen_x, screen_y, viewport_width, viewport_height)
+        
+        # 检查是否击中几何体
+        if result and result.is_hit():
+            return result.geometry
+        
+        # 没有击中任何几何体
+        return None 

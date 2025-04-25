@@ -378,8 +378,19 @@ class OpenGLView(QOpenGLWidget):
         """绘制平移控制器"""
         glDisable(GL_LIGHTING)
         
+        # 保存当前的线宽
+        previous_line_width = glGetFloatv(GL_LINE_WIDTH)
+        
+        # 设置线宽
+        glLineWidth(2.0)
+        
         # 绘制X轴（红色）
-        glColor3f(1.0, 0.0, 0.0)
+        if self._controller_axis == 'x':
+            # 高亮显示
+            glColor3f(1.0, 0.7, 0.7)  # 浅红色
+        else:
+            glColor3f(1.0, 0.0, 0.0)  # 红色
+        
         glBegin(GL_LINES)
         glVertex3f(0, 0, 0)
         glVertex3f(2, 0, 0)
@@ -393,7 +404,12 @@ class OpenGLView(QOpenGLWidget):
         glPopMatrix()
         
         # 绘制Y轴（绿色）
-        glColor3f(0.0, 1.0, 0.0)
+        if self._controller_axis == 'y':
+            # 高亮显示
+            glColor3f(0.7, 1.0, 0.7)  # 浅绿色
+        else:
+            glColor3f(0.0, 1.0, 0.0)  # 绿色
+        
         glBegin(GL_LINES)
         glVertex3f(0, 0, 0)
         glVertex3f(0, 2, 0)
@@ -407,7 +423,12 @@ class OpenGLView(QOpenGLWidget):
         glPopMatrix()
         
         # 绘制Z轴（蓝色）
-        glColor3f(0.0, 0.0, 1.0)
+        if self._controller_axis == 'z':
+            # 高亮显示
+            glColor3f(0.7, 0.7, 1.0)  # 浅蓝色
+        else:
+            glColor3f(0.0, 0.0, 1.0)  # 蓝色
+        
         glBegin(GL_LINES)
         glVertex3f(0, 0, 0)
         glVertex3f(0, 0, 2)
@@ -419,72 +440,58 @@ class OpenGLView(QOpenGLWidget):
         glutSolidCone(0.1, 0.3, 10, 10)
         glPopMatrix()
         
-        glEnable(GL_LIGHTING)
+        # 恢复线宽
+        glLineWidth(previous_line_width)
         
+        glEnable(GL_LIGHTING)
+
     def _draw_rotation_gizmo(self):
-        """绘制旋转控制器"""
-        glDisable(GL_LIGHTING)
-        
-        # X轴旋转环（红色）
-        glColor3f(1.0, 0.0, 0.0)
-        self._draw_rotation_ring(1.5, 0, 0, 1, 0, 0)
-        
-        # Y轴旋转环（绿色）
-        glColor3f(0.0, 1.0, 0.0)
-        self._draw_rotation_ring(1.5, 1, 0, 0, 0, 1, 0)
-        
-        # Z轴旋转环（蓝色）
-        glColor3f(0.0, 0.0, 1.0)
-        self._draw_rotation_ring(1.5, 0, 1, 0, 0, 0, 1)
-        
-        glEnable(GL_LIGHTING)
-        
-    def _draw_rotation_ring(self, radius, axis_x, axis_y, axis_z, up_x=0, up_y=0, up_z=1):
-        """
-        绘制旋转环（适用于Z轴向上的坐标系）
-        
-        参数:
-            radius: 环半径
-            axis_x, axis_y, axis_z: 旋转轴的方向
-            up_x, up_y, up_z: 上向量的方向（默认为Z轴）
-        """
-        segments = 32
-        angle_step = 270.0 / segments
-        
-        glPushMatrix()
-        
-        # 对准轴方向，使环垂直于指定轴
-        # 在Z轴向上的系统中，这需要不同的旋转逻辑
-        if axis_x == 1:  # X轴环，垂直于YZ平面
-            glRotatef(90, 0, 1, 0)
-        elif axis_y == 1:  # Y轴环，垂直于XZ平面
-            glRotatef(-90, 1, 0, 0)
-        # Z轴环在XY平面上，不需要额外旋转
-        
-        # 绘制半圆弧
-        glBegin(GL_LINE_STRIP)
-        for i in range(segments + 1):
-            angle = i * angle_step
-            x = radius * np.cos(np.radians(angle))
-            y = radius * np.sin(np.radians(angle))
-            glVertex3f(x, y, 0)
-        glEnd()
-        
-        # 绘制箭头
-        glPushMatrix()
-        glTranslatef(radius, 0, 0)
-        glRotatef(90, 0, 1, 0)
-        glutSolidCone(0.1, 0.3, 10, 10)
-        glPopMatrix()
-        
-        glPopMatrix()
-    
+        """绘制旋转控制器 - 将圆柱体显示为环状"""
+        for geo in self._controller_geometries:
+            if hasattr(geo, 'ring_axis'):
+                # 保存当前OpenGL状态
+                glPushMatrix()
+                
+                # 获取几何体的变换矩阵并应用
+                # 这确保环处于正确的位置和方向
+                matrix = geo.transform_matrix.T.flatten().tolist()
+                glMultMatrixf(matrix)
+                
+                # 设置环的颜色
+                color = geo.material.color
+                if self._controller_axis == geo.ring_axis:
+                    # 高亮显示当前选中的轴
+                    glColor4f(min(color[0] + 0.3, 1.0), min(color[1] + 0.3, 1.0), 
+                             min(color[2] + 0.3, 1.0), color[3])
+                else:
+                    glColor4f(*color)
+                
+                # 获取几何体的尺寸
+                radius = geo.size[0]
+                thickness = geo.size[1]
+                
+                # 绘制中空环
+                self._draw_hollow_cylinder(radius, thickness, 32, geo.ring_axis)
+                
+                # 恢复OpenGL状态
+                glPopMatrix()
+
     def _draw_scale_gizmo(self):
         """绘制缩放控制器"""
         glDisable(GL_LIGHTING)
         
+        # 保存当前的线宽
+        previous_line_width = glGetFloatv(GL_LINE_WIDTH)
+        
+        # 设置线宽
+        glLineWidth(2.0)
+        
         # X轴缩放控制（红色）
-        glColor3f(1.0, 0.0, 0.0)
+        if self._controller_axis == 'x':
+            glColor3f(1.0, 0.7, 0.7)  # 高亮显示（浅红色）
+        else:
+            glColor3f(1.0, 0.0, 0.0)
+        
         glBegin(GL_LINES)
         glVertex3f(0, 0, 0)
         glVertex3f(1.5, 0, 0)
@@ -498,7 +505,11 @@ class OpenGLView(QOpenGLWidget):
         glPopMatrix()
         
         # Y轴缩放控制（绿色）
-        glColor3f(0.0, 1.0, 0.0)
+        if self._controller_axis == 'y':
+            glColor3f(0.7, 1.0, 0.7)  # 高亮显示（浅绿色）
+        else:
+            glColor3f(0.0, 1.0, 0.0)
+        
         glBegin(GL_LINES)
         glVertex3f(0, 0, 0)
         glVertex3f(0, 1.5, 0)
@@ -512,7 +523,11 @@ class OpenGLView(QOpenGLWidget):
         glPopMatrix()
         
         # Z轴缩放控制（蓝色）
-        glColor3f(0.0, 0.0, 1.0)
+        if self._controller_axis == 'z':
+            glColor3f(0.7, 0.7, 1.0)  # 高亮显示（浅蓝色）
+        else:
+            glColor3f(0.0, 0.0, 1.0)
+        
         glBegin(GL_LINES)
         glVertex3f(0, 0, 0)
         glVertex3f(0, 0, 1.5)
@@ -524,6 +539,9 @@ class OpenGLView(QOpenGLWidget):
         glScalef(0.2, 0.2, 0.2)
         glutSolidCube(2.0)
         glPopMatrix()
+        
+        # 恢复线宽
+        glLineWidth(previous_line_width)
         
         glEnable(GL_LIGHTING)
     
@@ -705,24 +723,31 @@ class OpenGLView(QOpenGLWidget):
         
         if selected_geo and operation_mode != OperationMode.OBSERVE and selected_geo.visible:
             # 射线投射，检查是否点击到了控制器
-            result = self._pick_controller(event.x(), event.y())
-            if result:
+            axis = self._pick_controller(event.x(), event.y())
+            if axis:
                 self._dragging_controller = True
-                self._controller_axis = result
+                self._controller_axis = axis
                 self._drag_start_pos = event.pos()
+                self._drag_start_value = None  # 将在首次拖动时设置
                 
-                # 记录拖动开始时的初始值
-                if operation_mode == OperationMode.TRANSLATE:
-                    self._drag_start_value = selected_geo.position.copy()
-                elif operation_mode == OperationMode.ROTATE:
-                    self._drag_start_value = selected_geo.rotation.copy()
-                elif operation_mode == OperationMode.SCALE:
-                    self._drag_start_value = selected_geo.size.copy()
+                # 强制重绘以显示高亮效果
+                self.update()
                 return
         
-        # 选择对象
+        # 选择或取消选择对象
         if event.button() == Qt.LeftButton:
-            self._scene_viewmodel.select_at(event.x(), event.y(), self.width(), self.height())
+            # 获取当前鼠标位置的几何体
+            clicked_geo = self._scene_viewmodel.get_geometry_at(event.x(), event.y(), self.width(), self.height())
+            
+            # 如果点击的是当前已选中的几何体，则取消选择
+            if clicked_geo == self._scene_viewmodel.selected_geometry:
+                self._scene_viewmodel.clear_selection()
+            # 否则，选择点击的几何体
+            elif clicked_geo:
+                self._scene_viewmodel.selected_geometry = clicked_geo
+            # 如果没有点击到任何几何体，清除选择
+            else:
+                self._scene_viewmodel.clear_selection()
         
         # 发出信号
         self.mousePressed.emit(event)
@@ -740,6 +765,9 @@ class OpenGLView(QOpenGLWidget):
             self._controller_axis = None
             self._drag_start_pos = None
             self._drag_start_value = None
+            
+            # 强制重绘以移除高亮效果
+            self.update()
         
         # 发出信号
         self.mouseReleased.emit(event)
@@ -884,7 +912,7 @@ class OpenGLView(QOpenGLWidget):
     def _update_controllor_raycaster(self):
         """更新控制器射线投射器"""
         operation_mode = self._scene_viewmodel.operation_mode
-        selected_geo = self._scene_viewmodel.selected_geometry
+        selected_geo = self._scene_viewmodel.selected_geometry  # 确保使用correct属性名
         
         # 清空现有的控制器几何体
         self._controller_geometries = []
@@ -895,221 +923,317 @@ class OpenGLView(QOpenGLWidget):
             return
 
         # 获取控制器在世界空间中的位置
+        controller_origin = selected_geo.get_world_position()
+        
+        # 根据坐标系模式选择使用的坐标轴
         if self._use_local_coords:
             # 使用局部坐标系
-            controller_origin = selected_geo.get_world_position()
-            # 获取局部坐标轴方向和变换矩阵
-            local_x = selected_geo.transform_matrix[:3, 0]
-            local_y = selected_geo.transform_matrix[:3, 1]
-            local_z = selected_geo.transform_matrix[:3, 2]
-            transform_matrix = selected_geo.transform_matrix
+            transform_matrix = selected_geo.transform_matrix.copy()
         else:
             # 使用全局坐标系
-            controller_origin = selected_geo.get_world_position()
-            local_x = np.array([1, 0, 0])
-            local_y = np.array([0, 1, 0])
-            local_z = np.array([0, 0, 1])
-            # 创建只包含平移的变换矩阵
             transform_matrix = np.eye(4)
             transform_matrix[:3, 3] = controller_origin
         
         # 根据操作模式创建不同的控制器几何体
         if operation_mode == OperationMode.TRANSLATE:
-            # 为X、Y、Z轴创建平移控制器几何体（长条状）
+            # 平移控制器代码不变...
+            scale_factor = 2.0
+            axis_length = 2.0 * scale_factor
+            arrow_size = 0.25 * scale_factor
+            
+            # X轴
             x_axis = Geometry(
                 geo_type="box",
                 name="x_axis_controller",
-                position=(1.0, 0, 0),  # 轴中点位置
-                size=(2.0, 0.1, 0.1),  # 细长盒子
+                position=(axis_length/2, 0, 0),
+                size=(axis_length/2, 0.05, 0.05),
                 rotation=(0, 0, 0)
             )
-            x_axis.transform_matrix = transform_matrix
+            x_axis.tag = "x_axis"
+            x_axis.material.color = (1.0, 0.0, 0.0, 1.0)  # 红色
+            x_axis.transform_matrix = transform_matrix.copy()
             
+            # X轴箭头
+            x_arrow = Geometry(
+                geo_type="box",
+                name="x_arrow_controller",
+                position=(axis_length, 0, 0),
+                size=(arrow_size, arrow_size, arrow_size),
+                rotation=(0, 0, 45)
+            )
+            x_arrow.tag = "x_axis"
+            x_arrow.material.color = (1.0, 0.0, 0.0, 1.0)  # 红色
+            x_arrow.transform_matrix = transform_matrix.copy()
+            
+            # Y轴
             y_axis = Geometry(
                 geo_type="box",
                 name="y_axis_controller",
-                position=(0, 1.0, 0),
-                size=(0.1, 2.0, 0.1),
+                position=(0, axis_length/2, 0),
+                size=(0.05, axis_length/2, 0.05),
                 rotation=(0, 0, 0)
             )
-            y_axis.transform_matrix = transform_matrix
+            y_axis.tag = "y_axis"
+            y_axis.material.color = (0.0, 1.0, 0.0, 1.0)  # 绿色
+            y_axis.transform_matrix = transform_matrix.copy()
             
+            # Y轴箭头
+            y_arrow = Geometry(
+                geo_type="box",
+                name="y_arrow_controller",
+                position=(0, axis_length, 0),
+                size=(arrow_size, arrow_size, arrow_size),
+                rotation=(0, 0, 45)
+            )
+            y_arrow.tag = "y_axis"
+            y_arrow.material.color = (0.0, 1.0, 0.0, 1.0)  # 绿色
+            y_arrow.transform_matrix = transform_matrix.copy()
+            
+            # Z轴
             z_axis = Geometry(
                 geo_type="box",
                 name="z_axis_controller",
-                position=(0, 0, 1.0),
-                size=(0.1, 0.1, 2.0),
+                position=(0, 0, axis_length/2),
+                size=(0.05, 0.05, axis_length/2),
                 rotation=(0, 0, 0)
             )
-            z_axis.transform_matrix = transform_matrix
+            z_axis.tag = "z_axis"
+            z_axis.material.color = (0.0, 0.0, 1.0, 1.0)  # 蓝色
+            z_axis.transform_matrix = transform_matrix.copy()
             
-            # 箭头
-            x_arrow = Geometry(
-                geo_type="cone",
-                name="x_arrow_controller",
-                position=(2.0, 0, 0),
-                size=(0.2, 0.2, 0.3),
-                rotation=(0, 0, -90)
-            )
-            x_arrow.transform_matrix = transform_matrix
-            
-            y_arrow = Geometry(
-                geo_type="cone",
-                name="y_arrow_controller",
-                position=(0, 2.0, 0),
-                size=(0.2, 0.2, 0.3),
-                rotation=(90, 0, 0)
-            )
-            y_arrow.transform_matrix = transform_matrix
-            
+            # Z轴箭头
             z_arrow = Geometry(
-                geo_type="cone",
+                geo_type="box",
                 name="z_arrow_controller",
-                position=(0, 0, 2.0),
-                size=(0.2, 0.2, 0.3),
-                rotation=(0, 0, 0)
+                position=(0, 0, axis_length),
+                size=(arrow_size, arrow_size, arrow_size),
+                rotation=(45, 0, 0)
             )
-            z_arrow.transform_matrix = transform_matrix
+            z_arrow.tag = "z_axis"
+            z_arrow.material.color = (0.0, 0.0, 1.0, 1.0)  # 蓝色
+            z_arrow.transform_matrix = transform_matrix.copy()
             
-            self._controller_geometries = [x_axis, y_axis, z_axis, x_arrow, y_arrow, z_arrow]
+            self._controller_geometries = [x_axis, x_arrow, y_axis, y_arrow, z_axis, z_arrow]
         
         elif operation_mode == OperationMode.ROTATE:
-            # 为X、Y、Z轴创建旋转控制器几何体（环状）
+            # 为旋转控制器创建三个圆柱体
             radius = 1.5
-            thickness = 0.1
+            thickness = 0.1  # 圆柱体厚度
             
-            # 创建X轴旋转环（在YZ平面上）
+            # X轴旋转环（红色）- YZ平面
             x_ring = Geometry(
-                geo_type="torus",
-                name="x_ring_controller",
-                position=(0, 0, 0),
-                size=(radius, thickness, thickness),
-                rotation=(0, 90, 0)  # 旋转使环处于YZ平面
+                geo_type="cylinder",
+                name="x_rotation_controller",
+                position=(0, 0, 0),  # 使用相对位置，变换矩阵会处理
+                size=(radius, thickness, radius),  # 半径，高度，半径
+                rotation=(0, 90, 0)  # 旋转使圆柱体轴与X轴对齐
             )
-            x_ring.transform_matrix = transform_matrix
+            x_ring.tag = "x_rotation"
+            x_ring.material.color = (1.0, 0.0, 0.0, 1.0)  # 红色
+            x_ring.transform_matrix = transform_matrix.copy()
+            x_ring.ring_axis = "x"  # 标记为环的轴向
             
-            # 创建Y轴旋转环（在XZ平面上）
+            # Y轴旋转环（绿色）- XZ平面
             y_ring = Geometry(
-                geo_type="torus",
-                name="y_ring_controller",
-                position=(0, 0, 0),
-                size=(radius, thickness, thickness),
-                rotation=(90, 0, 0)  # 旋转使环处于XZ平面
+                geo_type="cylinder",
+                name="y_rotation_controller",
+                position=(0, 0, 0),  # 使用相对位置，变换矩阵会处理
+                size=(radius, thickness, radius),  # 半径，高度，半径
+                rotation=(90, 0, 0)  # 旋转使圆柱体轴与Y轴对齐
             )
-            y_ring.transform_matrix = transform_matrix
+            y_ring.tag = "y_rotation"
+            y_ring.material.color = (0.0, 1.0, 0.0, 1.0)  # 绿色
+            y_ring.transform_matrix = transform_matrix.copy()
+            y_ring.ring_axis = "y"  # 标记为环的轴向
             
-            # 创建Z轴旋转环（在XY平面上）
+            # Z轴旋转环（蓝色）- XY平面
             z_ring = Geometry(
-                geo_type="torus",
-                name="z_ring_controller",
-                position=(0, 0, 0),
-                size=(radius, thickness, thickness),
-                rotation=(0, 0, 0)  # 环已经在XY平面上
+                geo_type="cylinder",
+                name="z_rotation_controller",
+                position=(0, 0, 0),  # 使用相对位置，变换矩阵会处理
+                size=(radius, thickness, radius),  # 半径，高度，半径
+                rotation=(0, 0, 0)  # 默认朝向Z轴
             )
-            z_ring.transform_matrix = transform_matrix
+            z_ring.tag = "z_rotation"
+            z_ring.material.color = (0.0, 0.0, 1.0, 1.0)  # 蓝色
+            z_ring.transform_matrix = transform_matrix.copy()
+            z_ring.ring_axis = "z"  # 标记为环的轴向
             
             self._controller_geometries = [x_ring, y_ring, z_ring]
         
         elif operation_mode == OperationMode.SCALE:
-            # 为X、Y、Z轴创建缩放控制器几何体（轴+立方体手柄）
-            # 轴
+            # 缩放控制器代码不变...
+            scale_factor = 2.0
+            box_size = 0.25 * scale_factor
+            axis_length = 2.0 * scale_factor
+            
+            # X轴
             x_axis = Geometry(
                 geo_type="box",
-                name="x_scale_axis",
-                position=(0.75, 0, 0),
-                size=(1.5, 0.05, 0.05),
+                name="x_axis_controller",
+                position=(axis_length/2, 0, 0),
+                size=(axis_length/2, 0.05, 0.05),
                 rotation=(0, 0, 0)
             )
-            x_axis.transform_matrix = transform_matrix
+            x_axis.tag = "x_axis"
+            x_axis.material.color = (1.0, 0.5, 0.5, 1.0)  # 浅红色
+            x_axis.transform_matrix = transform_matrix.copy()
             
+            # X轴缩放盒
+            x_box = Geometry(
+                geo_type="box",
+                name="x_box_controller",
+                position=(axis_length, 0, 0),
+                size=(box_size, box_size, box_size),
+                rotation=(0, 0, 0)
+            )
+            x_box.tag = "x_axis"
+            x_box.material.color = (1.0, 0.0, 0.0, 1.0)  # 红色
+            x_box.transform_matrix = transform_matrix.copy()
+            
+            # Y轴
             y_axis = Geometry(
                 geo_type="box",
-                name="y_scale_axis",
-                position=(0, 0.75, 0),
-                size=(0.05, 1.5, 0.05),
+                name="y_axis_controller",
+                position=(0, axis_length/2, 0),
+                size=(0.05, axis_length/2, 0.05),
                 rotation=(0, 0, 0)
             )
-            y_axis.transform_matrix = transform_matrix
+            y_axis.tag = "y_axis"
+            y_axis.material.color = (0.5, 1.0, 0.5, 1.0)  # 浅绿色
+            y_axis.transform_matrix = transform_matrix.copy()
             
+            # Y轴缩放盒
+            y_box = Geometry(
+                geo_type="box",
+                name="y_box_controller",
+                position=(0, axis_length, 0),
+                size=(box_size, box_size, box_size),
+                rotation=(0, 0, 0)
+            )
+            y_box.tag = "y_axis"
+            y_box.material.color = (0.0, 1.0, 0.0, 1.0)  # 绿色
+            y_box.transform_matrix = transform_matrix.copy()
+            
+            # Z轴
             z_axis = Geometry(
                 geo_type="box",
-                name="z_scale_axis",
-                position=(0, 0, 0.75),
-                size=(0.05, 0.05, 1.5),
+                name="z_axis_controller",
+                position=(0, 0, axis_length/2),
+                size=(0.05, 0.05, axis_length/2),
                 rotation=(0, 0, 0)
             )
-            z_axis.transform_matrix = transform_matrix
+            z_axis.tag = "z_axis"
+            z_axis.material.color = (0.5, 0.5, 1.0, 1.0)  # 浅蓝色
+            z_axis.transform_matrix = transform_matrix.copy()
             
-            # 立方体手柄
-            x_handle = Geometry(
+            # Z轴缩放盒
+            z_box = Geometry(
                 geo_type="box",
-                name="x_scale_handle",
-                position=(1.5, 0, 0),
-                size=(0.2, 0.2, 0.2),
+                name="z_box_controller",
+                position=(0, 0, axis_length),
+                size=(box_size, box_size, box_size),
                 rotation=(0, 0, 0)
             )
-            x_handle.transform_matrix = transform_matrix
+            z_box.tag = "z_axis"
+            z_box.material.color = (0.0, 0.0, 1.0, 1.0)  # 蓝色
+            z_box.transform_matrix = transform_matrix.copy()
             
-            y_handle = Geometry(
-                geo_type="box",
-                name="y_scale_handle",
-                position=(0, 1.5, 0),
-                size=(0.2, 0.2, 0.2),
-                rotation=(0, 0, 0)
-            )
-            y_handle.transform_matrix = transform_matrix
-            
-            z_handle = Geometry(
-                geo_type="box",
-                name="z_scale_handle",
-                position=(0, 0, 1.5),
-                size=(0.2, 0.2, 0.2),
-                rotation=(0, 0, 0)
-            )
-            z_handle.transform_matrix = transform_matrix
-            
-            self._controller_geometries = [x_axis, y_axis, z_axis, x_handle, y_handle, z_handle]
+            self._controller_geometries = [x_axis, x_box, y_axis, y_box, z_axis, z_box]
         
         # 创建控制器射线投射器
-        self._controllor_raycaster = GeometryRaycaster(self._scene_viewmodel._camera_config, self._controller_geometries)
+        self._controllor_raycaster = GeometryRaycaster(
+            self._scene_viewmodel._camera_config, 
+            self._controller_geometries
+        )
 
     def _pick_controller(self, screen_x, screen_y):
-        """
-        检测是否点击到变换控制器
-        
-        参数:
-            screen_x: 屏幕X坐标
-            screen_y: 屏幕Y坐标
-            
-        返回:
-            轴标识('x', 'y', 'z')或None
-        """
+        """检测是否点击到变换控制器"""
         if self._controllor_raycaster is None:
             self._update_controllor_raycaster()
-            self.update()
-
-        # 使用控制器射线投射器进行检测
+        
+        if self._controllor_raycaster is None:
+            return None
+        
+        # 重置控制器轴和拖动状态
+        self._controller_axis = None
+        self._drag_operation = None
+        self._initial_value = None
+        
+        # 获取当前选中的对象 - 将 selected_object 修改为 selected_geometry
+        selected_obj = self._scene_viewmodel.selected_geometry
+        if not selected_obj:
+            return None
+        
+        # 使用控制器射线投射器检测点击
         result = self._controllor_raycaster.raycast(screen_x, screen_y, self.width(), self.height())
         
-        if result.is_hit():
-            # 根据命中的几何体名称确定轴
-            geo_name = result.geometry.name
-            if 'x_' in geo_name:
-                return 'x'
-            elif 'y_' in geo_name:
-                return 'y'
-            elif 'z_' in geo_name:
-                return 'z'
+        if result and result.is_hit():
+            # 查找控制器类型
+            geo = result.geometry
+            
+            # 记录初始值，用于撤销功能
+            operation_mode = self._scene_viewmodel.operation_mode
+            
+            if operation_mode == OperationMode.TRANSLATE:
+                self._drag_operation = "translate"
+                self._initial_value = selected_obj.position.copy()
+            
+            elif operation_mode == OperationMode.ROTATE:
+                self._drag_operation = "rotate"
+                self._initial_value = selected_obj.rotation.copy()
+                
+                # 确定旋转轴
+                if hasattr(geo, 'ring_axis'):
+                    self._controller_axis = geo.ring_axis
+                    return geo.ring_axis
+                
+                # 回退检查tag
+                if hasattr(geo, 'tag'):
+                    tag = geo.tag
+                    if 'x_rotation' in tag:
+                        self._controller_axis = 'x'
+                        return 'x'
+                    elif 'y_rotation' in tag:
+                        self._controller_axis = 'y'
+                        return 'y'
+                    elif 'z_rotation' in tag:
+                        self._controller_axis = 'z'
+                        return 'z'
+            
+            elif operation_mode == OperationMode.SCALE:
+                self._drag_operation = "scale"
+                self._initial_value = selected_obj.size.copy()
+            
+            # 标准轴检测
+            if hasattr(geo, 'tag'):
+                tag = geo.tag
+                if 'x_axis' in tag:
+                    self._controller_axis = 'x'
+                    return 'x'
+                elif 'y_axis' in tag:
+                    self._controller_axis = 'y'
+                    return 'y'
+                elif 'z_axis' in tag:
+                    self._controller_axis = 'z'
+                    return 'z'
         
+        # 没有点击到控制器
+        self._drag_operation = None
+        self._initial_value = None
         return None
-        
+
     def _handle_translation_drag(self, geometry, dx, dy):
         """处理平移拖动"""
         # 根据拖动轴和摄像机方向计算拖动量
-        drag_amount = self._calculate_drag_amount(dx, dy, 0.01)
+        drag_amount = self._calculate_drag_amount(dx, dy, 0.015)  # 增加灵敏度
         
         # 获取当前位置
         current_pos = geometry.position.copy()
+        
+        # 记录操作前的值（用于撤销功能）
+        if self._drag_start_value is None:
+            self._drag_start_value = current_pos.copy()
         
         # 根据控制器轴应用拖动
         if self._controller_axis == 'x':
@@ -1140,44 +1264,68 @@ class OpenGLView(QOpenGLWidget):
         # 更新几何体位置
         geometry.position = current_pos
         
+        # 通知视图模型对象已更改
+        self._scene_viewmodel.notify_object_changed(geometry)
+
     def _handle_rotation_drag(self, geometry, dx, dy):
         """处理旋转拖动"""
         # 根据拖动轴和摄像机方向计算旋转量（角度）
-        rotation_amount = self._calculate_drag_amount(dx, dy, 0.5)
+        rotation_amount = self._calculate_drag_amount(dx, dy, 1.0)  # 增加灵敏度
         
         # 获取当前旋转
         current_rotation = geometry.rotation.copy()
         
+        # 记录操作前的值（用于撤销功能）
+        if self._drag_start_value is None:
+            self._drag_start_value = current_rotation.copy()
+        
         # 根据控制器轴应用旋转
         if self._controller_axis == 'x':
             current_rotation[0] += rotation_amount
+            # 规范化角度到0-360
+            current_rotation[0] = current_rotation[0] % 360
         elif self._controller_axis == 'y':
             current_rotation[1] += rotation_amount
+            current_rotation[1] = current_rotation[1] % 360
         elif self._controller_axis == 'z':
             current_rotation[2] += rotation_amount
+            current_rotation[2] = current_rotation[2] % 360
             
         # 更新几何体旋转
         geometry.rotation = current_rotation
         
+        # 通知视图模型对象已更改
+        self._scene_viewmodel.notify_object_changed(geometry)
+
     def _handle_scale_drag(self, geometry, dx, dy):
         """处理缩放拖动"""
         # 根据拖动轴和摄像机方向计算缩放量
-        scale_amount = 1.0 + self._calculate_drag_amount(dx, dy, 0.01)
+        scale_factor = 1.0 + self._calculate_drag_amount(dx, dy, 0.015)  # 调整灵敏度
         
         # 获取当前缩放
         current_scale = geometry.size.copy()
         
-        # 根据控制器轴应用缩放
+        # 记录操作前的值（用于撤销功能）
+        if self._drag_start_value is None:
+            self._drag_start_value = current_scale.copy()
+        
+        # 根据控制器轴应用缩放，并确保大小不为负值
         if self._controller_axis == 'x':
-            current_scale[0] *= scale_amount
+            current_scale[0] *= scale_factor
+            current_scale[0] = max(0.01, current_scale[0])  # 最小尺寸限制
         elif self._controller_axis == 'y':
-            current_scale[1] *= scale_amount
+            current_scale[1] *= scale_factor
+            current_scale[1] = max(0.01, current_scale[1])
         elif self._controller_axis == 'z':
-            current_scale[2] *= scale_amount
-            
+            current_scale[2] *= scale_factor
+            current_scale[2] = max(0.01, current_scale[2])
+        
         # 更新几何体缩放
         geometry.size = current_scale
         
+        # 通知视图模型对象已更改
+        self._scene_viewmodel.notify_object_changed(geometry)
+
     def _calculate_drag_amount(self, dx, dy, sensitivity):
         """
         根据屏幕拖动量计算实际的拖动量（基于Z轴向上的坐标系）
@@ -1538,3 +1686,80 @@ class OpenGLView(QOpenGLWidget):
             print(f"绘制预览出错: {e}")
             import traceback
             traceback.print_exc() 
+
+    def _draw_hollow_cylinder(self, radius, thickness, slices, axis="z"):
+        """
+        绘制中空的圆柱体（环状）
+        
+        参数:
+            radius: 环的半径
+            thickness: 环的厚度（高度）
+            slices: 细分数
+            axis: 环的朝向轴("x", "y", "z")
+        """
+        import math
+        
+        inner_radius = radius * 0.8  # 内径为外径的80%
+        half_thickness = thickness / 2.0
+        
+        # 确定圆环的旋转
+        if axis == "x":
+            # 使圆环法线朝向X轴
+            glRotatef(90, 0, 1, 0)
+        elif axis == "y":
+            # 使圆环法线朝向Y轴
+            glRotatef(90, 1, 0, 0)
+        # Z轴不需要额外旋转
+        
+        # 使用 GL_TRIANGLES 绘制，将圆环分解为三角形
+        # 外圆柱面
+        glBegin(GL_TRIANGLE_STRIP)
+        for i in range(slices + 1):
+            angle = 2.0 * math.pi * i / slices
+            cos_val = math.cos(angle)
+            sin_val = math.sin(angle)
+            
+            # 外圆柱体底部顶点
+            glVertex3f(radius * cos_val, radius * sin_val, -half_thickness)
+            # 外圆柱体顶部顶点
+            glVertex3f(radius * cos_val, radius * sin_val, half_thickness)
+        glEnd()
+        
+        # 内圆柱面
+        glBegin(GL_TRIANGLE_STRIP)
+        for i in range(slices + 1):
+            angle = 2.0 * math.pi * i / slices
+            cos_val = math.cos(angle)
+            sin_val = math.sin(angle)
+            
+            # 内圆柱体顶部顶点
+            glVertex3f(inner_radius * cos_val, inner_radius * sin_val, half_thickness)
+            # 内圆柱体底部顶点
+            glVertex3f(inner_radius * cos_val, inner_radius * sin_val, -half_thickness)
+        glEnd()
+        
+        # 顶面（连接内外圆）
+        glBegin(GL_TRIANGLE_STRIP)
+        for i in range(slices + 1):
+            angle = 2.0 * math.pi * i / slices
+            cos_val = math.cos(angle)
+            sin_val = math.sin(angle)
+            
+            # 内圆顶点
+            glVertex3f(inner_radius * cos_val, inner_radius * sin_val, half_thickness)
+            # 外圆顶点
+            glVertex3f(radius * cos_val, radius * sin_val, half_thickness)
+        glEnd()
+        
+        # 底面（连接内外圆）
+        glBegin(GL_TRIANGLE_STRIP)
+        for i in range(slices + 1):
+            angle = 2.0 * math.pi * i / slices
+            cos_val = math.cos(angle)
+            sin_val = math.sin(angle)
+            
+            # 外圆顶点
+            glVertex3f(radius * cos_val, radius * sin_val, -half_thickness)
+            # 内圆顶点
+            glVertex3f(inner_radius * cos_val, inner_radius * sin_val, -half_thickness)
+        glEnd()

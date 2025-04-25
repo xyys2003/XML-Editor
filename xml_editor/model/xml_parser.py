@@ -214,137 +214,222 @@ class XMLParser:
             if parent_body is not None:
                 parent_map[body_name] = parent_body.get('name', 'Unnamed')
         
-        # 首先处理世界body（没有父节点的body）
-        world_body = root.find(".//worldbody")
-        if world_body is not None:
-            world_group = GeometryGroup(name="World")
+        # 处理所有body
+        for body in root.findall(".//body"):
+            body_name = body.get('name', 'Unnamed')
+            if body_name in body_groups:
+                continue  # 跳过已处理的body
             
-            # 处理直接在worldbody下的geom
-            for geom in world_body.findall("./geom"):
-                geo = XMLParser._process_mujoco_geom(geom, parent=world_group)
-                if geo:
-                    world_group.add_child(geo)
+            body_pos = list(map(float, body.get('pos', '0 0 0').split()))
+            body_euler = list(map(float, body.get('euler', '0 0 0').split())) if 'euler' in body.attrib else [0, 0, 0]
             
-            # 处理worldbody下的body
-            for body in world_body.findall("./body"):
-                body_group = XMLParser._process_mujoco_body(body, parent=world_group)
-                if body_group:
-                    world_group.add_child(body_group)
-                    body_name = body.get('name', 'Unnamed')
-                    body_groups[body_name] = body_group
+            # 检查四元数表示
+            if 'quat' in body.attrib:
+                quat = list(map(float, body.get('quat').split()))
+                if len(quat) == 4:
+                    body_euler = XMLParser._quat_to_euler(quat)
             
-            geometries.append(world_group)
-        
-        # 更新所有几何体的变换矩阵
-        XMLParser._update_transforms_recursive(geometries)
-        
-        return geometries
-    
-    @staticmethod
-    def _process_mujoco_geom(geom_elem, parent=None):
-        """处理MuJoCo XML中的geom元素"""
-        geom_name = geom_elem.get('name', 'Geom')
-        geom_type = geom_elem.get('type', 'box')
-        
-        # 位置 (x,y,z)
-        pos_str = geom_elem.get('pos', '0 0 0')
-        pos = [float(x) for x in pos_str.split()]
-        if len(pos) < 3:
-            pos.extend([0] * (3 - len(pos)))
-        
-        # 尺寸 (在MuJoCo中，大小表示方式与几何体类型有关)
-        size_str = geom_elem.get('size', '0.1 0.1 0.1')
-        size = [float(x) for x in size_str.split()]
-        if len(size) < 3:
-            if geom_type == 'sphere':
-                # 球体：半径
-                size = [size[0], size[0], size[0]]
-            elif geom_type == 'cylinder' or geom_type == 'capsule':
-                # 圆柱/胶囊：半径和半高
-                size = [size[0], size[0], size[1] if len(size) > 1 else size[0]]
-            else:
-                # 默认补全为立方体
-                size.extend([0.1] * (3 - len(size)))
-        
-        # 旋转 (MuJoCo使用四元数或欧拉角)
-        euler = [0, 0, 0]
-        quat_str = geom_elem.get('quat', None)
-        if quat_str:
-            quat = [float(x) for x in quat_str.split()]
-            if len(quat) == 4:
-                # 将四元数转换为欧拉角，这里简化实现
-                euler = XMLParser._quat_to_euler(quat)
-        else:
-            # 也可能使用欧拉角赋值
-            euler_str = geom_elem.get('euler', '0 0 0')
-            euler = [float(x) for x in euler_str.split()]
-            if len(euler) < 3:
-                euler.extend([0] * (3 - len(euler)))
-        
-        # 创建几何体
-        geo = Geometry(
-            geo_type=geom_type,
-            name=geom_name,
-            position=pos,
-            size=size,
-            rotation=euler,
-            parent=parent
-        )
-        
-        # 处理颜色属性
-        rgba_str = geom_elem.get('rgba', None)
-        if rgba_str:
-            rgba = [float(x) for x in rgba_str.split()]
-            if len(rgba) == 4:
-                geo.material.color = rgba
-        
-        return geo
-    
-    @staticmethod
-    def _process_mujoco_body(body_elem, parent=None):
-        """处理MuJoCo XML中的body元素"""
-        body_name = body_elem.get('name', 'Body')
-        
-        # 位置
-        pos_str = body_elem.get('pos', '0 0 0')
-        pos = [float(x) for x in pos_str.split()]
-        if len(pos) < 3:
-            pos.extend([0] * (3 - len(pos)))
-        
-        # 旋转
-        euler = [0, 0, 0]
-        quat_str = body_elem.get('quat', None)
-        if quat_str:
-            quat = [float(x) for x in quat_str.split()]
-            if len(quat) == 4:
-                euler = XMLParser._quat_to_euler(quat)
-        else:
-            euler_str = body_elem.get('euler', '0 0 0')
-            euler = [float(x) for x in euler_str.split()]
-            if len(euler) < 3:
-                euler.extend([0] * (3 - len(euler)))
-        
-        # 创建组
-        group = GeometryGroup(
-            name=body_name,
-            position=pos,
-            rotation=euler,
-            parent=parent
-        )
-        
-        # 处理body中的所有geom
-        for geom in body_elem.findall("./geom"):
-            geo = XMLParser._process_mujoco_geom(geom, parent=group)
-            if geo:
+            # 创建组对象
+            group = GeometryGroup(
+                name=body_name,
+                position=body_pos,
+                rotation=body_euler
+            )
+            
+            # 确保变换矩阵被更新
+            if hasattr(group, "update_transform_matrix"):
+                group.update_transform_matrix()
+            
+            body_groups[body_name] = group
+            
+            # 添加所有geom子对象
+            for geom in body.findall("geom"):
+                geo_type = geom.get('type', 'box')
+                geom_name = geom.get('name', f"{body_name}_geom")
+                
+                # 解析尺寸
+                size_str = geom.get('size', '1 1 1')
+                size = list(map(float, size_str.split()))
+                
+                # 适当地处理尺寸格式
+                if geo_type == 'sphere':
+                    if len(size) == 1:
+                        size = [size[0], size[0], size[0]]  # 保持三个相同的半径值
+                elif geo_type == 'ellipsoid':
+                    # 确保有三个尺寸
+                    if len(size) < 3:
+                        size.extend([size[0]] * (3 - len(size)))
+                elif geo_type in ['capsule', 'cylinder']:
+                    # 确保有两个尺寸
+                    if len(size) < 2:
+                        size.append(1.0)  # 默认半高
+                    if len(size) < 3:
+                        size.append(0)  # 补充第三个参数
+                
+                # 解析位置（相对于body的局部坐标）
+                local_pos = list(map(float, geom.get('pos', '0 0 0').split())) if 'pos' in geom.attrib else [0, 0, 0]
+                
+                # 解析旋转
+                local_euler = [0, 0, 0]
+                if 'euler' in geom.attrib:
+                    local_euler = list(map(float, geom.get('euler').split()))
+                elif 'quat' in geom.attrib:
+                    quat = list(map(float, geom.get('quat').split()))
+                    if len(quat) == 4:
+                        local_euler = XMLParser._quat_to_euler(quat)
+                
+                # 解析颜色
+                color = [0.8, 0.8, 0.8, 1.0]  # 默认灰色
+                
+                # 优先使用rgba属性
+                if 'rgba' in geom.attrib:
+                    rgba_str = geom.get('rgba')
+                    rgba_values = list(map(float, rgba_str.split()))
+                    # 确保有四个值
+                    if len(rgba_values) == 3:
+                        rgba_values.append(1.0)  # 添加alpha默认值
+                    elif len(rgba_values) < 3:
+                        rgba_values = [0.8, 0.8, 0.8, 1.0]  # 默认灰色
+                    color = rgba_values
+                # 检查是否引用了material
+                elif 'material' in geom.attrib:
+                    material_name = geom.get('material')
+                    # 尝试在asset下找到对应的material
+                    material_elem = root.find(f".//asset/material[@name='{material_name}']")
+                    if material_elem is not None and 'rgba' in material_elem.attrib:
+                        rgba_str = material_elem.get('rgba')
+                        color = list(map(float, rgba_str.split()))
+                        if len(color) == 3:
+                            color.append(1.0)  # 添加默认透明度
+                
+                # 创建几何体
+                geo = Geometry(
+                    geo_type=geo_type,
+                    name=geom_name,
+                    position=local_pos,
+                    size=size,
+                    rotation=local_euler,
+                    parent=group
+                )
+                
+                # 设置颜色
+                geo.material.color = color
+                
+                # 确保变换矩阵被更新
+                if hasattr(geo, "update_transform_matrix"):
+                    geo.update_transform_matrix()
+                
+                # 添加到组中
                 group.add_child(geo)
         
-        # 处理嵌套body
-        for child_body in body_elem.findall("./body"):
-            child_group = XMLParser._process_mujoco_body(child_body, parent=group)
-            if child_group:
-                group.add_child(child_group)
+        # 在返回前进行一次全面的变换矩阵更新
+        # 先确保所有父子关系已经建立
+        for body_name, parent_name in parent_map.items():
+            if body_name in body_groups and parent_name in body_groups:
+                child_group = body_groups[body_name]
+                parent_group = body_groups[parent_name]
+                
+                # 避免重复添加
+                if child_group not in parent_group.children:
+                    parent_group.add_child(child_group)
         
-        return group
+        # 收集所有顶层组（没有父组的组）
+        top_level_groups = []
+        for name, group in body_groups.items():
+            if name not in parent_map:  # 没有父组
+                top_level_groups.append(group)
+        
+        # 如果找到了顶层组，将它们添加到geometries
+        if top_level_groups:
+            geometries.extend(top_level_groups)
+        
+        # 处理worldbody下的直接geom
+        world_body = root.find(".//worldbody")
+        if world_body is not None:
+            # 创建一个世界组来容纳直接的几何体
+            world_group = None
+            
+            for geom in world_body.findall("geom"):
+                # 排除参考平面和坐标轴
+                geom_name = geom.get('name', '')
+                if geom_name in ["ground", "x_axis", "y_axis", "z_axis"]:
+                    continue
+                
+                # 如果还没有创建世界组并且找到有效几何体，创建一个世界组
+                if world_group is None:
+                    world_group = GeometryGroup(name="World")
+                    geometries.append(world_group)
+                
+                geo_type = geom.get('type', 'box')
+                pos = list(map(float, geom.get('pos', '0 0 0').split()))
+                size_str = geom.get('size', '1 1 1')
+                size = list(map(float, size_str.split()))
+                
+                # 根据类型调整尺寸格式
+                if geo_type == 'sphere':
+                    if len(size) == 1:
+                        size = [size[0], size[0], size[0]]
+                elif geo_type in ['capsule', 'cylinder']:
+                    if len(size) < 2:
+                        size.append(1.0)
+                    if len(size) < 3:
+                        size.append(0)
+                elif len(size) < 3:
+                    size.extend([1.0] * (3 - len(size)))
+                
+                # 解析旋转
+                euler = [0, 0, 0]
+                if 'euler' in geom.attrib:
+                    euler = list(map(float, geom.get('euler').split()))
+                elif 'quat' in geom.attrib:
+                    quat = list(map(float, geom.get('quat').split()))
+                    if len(quat) == 4:
+                        euler = XMLParser._quat_to_euler(quat)
+                
+                # 解析颜色
+                color = [0.8, 0.8, 0.8, 1.0]  # 默认灰色
+                
+                if 'rgba' in geom.attrib:
+                    rgba_str = geom.get('rgba')
+                    rgba_values = list(map(float, rgba_str.split()))
+                    if len(rgba_values) >= 3:
+                        color = rgba_values
+                        if len(color) == 3:
+                            color.append(1.0)  # 添加alpha默认值
+                
+                # 创建几何体
+                geo = Geometry(
+                    geo_type=geo_type,
+                    name=geom_name or "Object",
+                    position=pos,
+                    size=size,
+                    rotation=euler,
+                    parent=world_group
+                )
+                
+                # 设置材质
+                geo.material.color = color
+                
+                # 确保变换矩阵被更新
+                if hasattr(geo, "update_transform_matrix"):
+                    geo.update_transform_matrix()
+                
+                if world_group is not None:
+                    world_group.add_child(geo)
+                else:
+                    geometries.append(geo)
+        
+        # 最后，对所有对象进行两遍更新以确保变换正确传播
+        # 第一遍：更新所有对象的本地变换
+        XMLParser._update_transforms_recursive(geometries)
+        
+        # 第二遍：确保世界变换正确传播
+        XMLParser._update_world_transforms_recursive(geometries)
+        
+        # 强制更新并通知每个对象已更改
+        XMLParser._force_notify_objects_changed(geometries)
+        
+        return geometries
     
     @staticmethod
     def _update_transforms_recursive(objects):
@@ -362,7 +447,24 @@ class XMLParser:
                 for child in objects.children:
                     XMLParser._update_transforms_recursive(child)
     
-
+    @staticmethod
+    def _update_world_transforms_recursive(objects):
+        """递归更新所有几何体的世界变换矩阵"""
+        if isinstance(objects, list):
+            for obj in objects:
+                XMLParser._update_world_transforms_recursive(obj)
+        else:
+            # 更新当前对象的全局变换
+            if hasattr(objects, "update_global_transform"):
+                objects.update_global_transform()
+            elif hasattr(objects, "update_transform_matrix"):
+                # 如果没有专门的全局变换更新方法，使用常规更新
+                objects.update_transform_matrix()
+            
+            # 如果是组，递归更新子对象
+            if hasattr(objects, "children") and objects.children:
+                for child in objects.children:
+                    XMLParser._update_world_transforms_recursive(child)
     
     @staticmethod
     def export_mujoco_xml(filename, geometries):
@@ -480,6 +582,68 @@ class XMLParser:
         
         return [roll, pitch, yaw]
     
+    @staticmethod
+    def _force_notify_objects_changed(objects):
+        """
+        强制通知所有对象已更改，触发必要的更新
+        
+        这是一个静态方法，无法直接访问scene_model，
+        因此需要通过对象本身发送通知
+        """
+        if isinstance(objects, list):
+            for obj in objects:
+                XMLParser._force_notify_objects_changed(obj)
+        else:
+            # 尝试触发对象自身的更新通知
+            if hasattr(objects, "notify_changed") and callable(objects.notify_changed):
+                objects.notify_changed()
+            
+            # 触发变换矩阵更新
+            if hasattr(objects, "update_transform_matrix"):
+                objects.update_transform_matrix()
+            
+            # 手动触发属性更新以模拟set_property的行为
+            if hasattr(objects, "position"):
+                try:
+                    # 保存当前位置
+                    original_position = objects.position.copy() if hasattr(objects.position, "copy") else objects.position[:]
+                    # 临时设置新值，触发更新
+                    objects.position = original_position
+                except Exception as e:
+                    print(f"更新位置时出错: {e}")
+                
+            if hasattr(objects, "rotation"):
+                try:
+                    # 保存当前旋转
+                    original_rotation = objects.rotation.copy() if hasattr(objects.rotation, "copy") else objects.rotation[:]
+                    # 临时设置新值，触发更新
+                    objects.rotation = original_rotation
+                except Exception as e:
+                    print(f"更新旋转时出错: {e}")
+            
+            if hasattr(objects, "size"):
+                try:
+                    # 检查size是否为数组且不为空
+                    has_size = False
+                    if isinstance(objects.size, np.ndarray):
+                        has_size = objects.size.size > 0
+                    elif isinstance(objects.size, (list, tuple)):
+                        has_size = len(objects.size) > 0
+                    else:
+                        has_size = bool(objects.size)
+                    
+                    if has_size:
+                        # 保存当前大小
+                        original_size = objects.size.copy() if hasattr(objects.size, "copy") else objects.size[:]
+                        # 临时设置新值，触发更新
+                        objects.size = original_size
+                except Exception as e:
+                    print(f"更新尺寸时出错: {e}")
+            
+            # 递归处理子对象
+            if hasattr(objects, "children") and objects.children:
+                for child in objects.children:
+                    XMLParser._force_notify_objects_changed(child)
     
     # 保存方法别名，使用增强XML格式
     save = export_mujoco_xml
