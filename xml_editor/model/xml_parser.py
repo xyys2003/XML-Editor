@@ -426,9 +426,6 @@ class XMLParser:
         # 第二遍：确保世界变换正确传播
         XMLParser._update_world_transforms_recursive(geometries)
         
-        # 强制更新并通知每个对象已更改
-        XMLParser._force_notify_objects_changed(geometries)
-        
         return geometries
     
     @staticmethod
@@ -582,68 +579,6 @@ class XMLParser:
         
         return [roll, pitch, yaw]
     
-    @staticmethod
-    def _force_notify_objects_changed(objects):
-        """
-        强制通知所有对象已更改，触发必要的更新
-        
-        这是一个静态方法，无法直接访问scene_model，
-        因此需要通过对象本身发送通知
-        """
-        if isinstance(objects, list):
-            for obj in objects:
-                XMLParser._force_notify_objects_changed(obj)
-        else:
-            # 尝试触发对象自身的更新通知
-            if hasattr(objects, "notify_changed") and callable(objects.notify_changed):
-                objects.notify_changed()
-            
-            # 触发变换矩阵更新
-            if hasattr(objects, "update_transform_matrix"):
-                objects.update_transform_matrix()
-            
-            # 手动触发属性更新以模拟set_property的行为
-            if hasattr(objects, "position"):
-                try:
-                    # 保存当前位置
-                    original_position = objects.position.copy() if hasattr(objects.position, "copy") else objects.position[:]
-                    # 临时设置新值，触发更新
-                    objects.position = original_position
-                except Exception as e:
-                    print(f"更新位置时出错: {e}")
-                
-            if hasattr(objects, "rotation"):
-                try:
-                    # 保存当前旋转
-                    original_rotation = objects.rotation.copy() if hasattr(objects.rotation, "copy") else objects.rotation[:]
-                    # 临时设置新值，触发更新
-                    objects.rotation = original_rotation
-                except Exception as e:
-                    print(f"更新旋转时出错: {e}")
-            
-            if hasattr(objects, "size"):
-                try:
-                    # 检查size是否为数组且不为空
-                    has_size = False
-                    if isinstance(objects.size, np.ndarray):
-                        has_size = objects.size.size > 0
-                    elif isinstance(objects.size, (list, tuple)):
-                        has_size = len(objects.size) > 0
-                    else:
-                        has_size = bool(objects.size)
-                    
-                    if has_size:
-                        # 保存当前大小
-                        original_size = objects.size.copy() if hasattr(objects.size, "copy") else objects.size[:]
-                        # 临时设置新值，触发更新
-                        objects.size = original_size
-                except Exception as e:
-                    print(f"更新尺寸时出错: {e}")
-            
-            # 递归处理子对象
-            if hasattr(objects, "children") and objects.children:
-                for child in objects.children:
-                    XMLParser._force_notify_objects_changed(child)
     
     # 保存方法别名，使用增强XML格式
     save = export_mujoco_xml

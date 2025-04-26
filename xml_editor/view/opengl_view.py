@@ -69,6 +69,10 @@ class OpenGLView(QOpenGLWidget):
         self._scene_viewmodel.selectionChanged.connect(self._on_selection_changed)
         self._scene_viewmodel.objectChanged.connect(self._on_object_changed)  # 监听对象变化信号
         self._scene_viewmodel.operationModeChanged.connect(self._on_operation_mode_changed)  # 监听操作模式变化信号
+        
+        # 连接坐标系变化信号
+        if hasattr(self._scene_viewmodel, 'coordinateSystemChanged'):
+            self._scene_viewmodel.coordinateSystemChanged.connect(self._on_coordinate_system_changed)
 
         # 捕获焦点
         self.setFocusPolicy(Qt.StrongFocus)
@@ -446,35 +450,75 @@ class OpenGLView(QOpenGLWidget):
         glEnable(GL_LIGHTING)
 
     def _draw_rotation_gizmo(self):
-        """绘制旋转控制器 - 将圆柱体显示为环状"""
-        for geo in self._controller_geometries:
-            if hasattr(geo, 'ring_axis'):
-                # 保存当前OpenGL状态
-                glPushMatrix()
-                
-                # 获取几何体的变换矩阵并应用
-                # 这确保环处于正确的位置和方向
-                matrix = geo.transform_matrix.T.flatten().tolist()
-                glMultMatrixf(matrix)
-                
-                # 设置环的颜色
-                color = geo.material.color
-                if self._controller_axis == geo.ring_axis:
-                    # 高亮显示当前选中的轴
-                    glColor4f(min(color[0] + 0.3, 1.0), min(color[1] + 0.3, 1.0), 
-                             min(color[2] + 0.3, 1.0), color[3])
-                else:
-                    glColor4f(*color)
-                
-                # 获取几何体的尺寸
-                radius = geo.size[0]
-                thickness = geo.size[1]
-                
-                # 绘制中空环
-                self._draw_hollow_cylinder(radius, thickness, 32, geo.ring_axis)
-                
-                # 恢复OpenGL状态
-                glPopMatrix()
+        """绘制旋转控制器 - 使用与平移控制器相同的样式"""
+        glDisable(GL_LIGHTING)
+        
+        # 保存当前的线宽
+        previous_line_width = glGetFloatv(GL_LINE_WIDTH)
+        
+        # 设置线宽
+        glLineWidth(2.0)
+        
+        # 绘制X轴（红色）
+        if self._controller_axis == 'x':
+            # 高亮显示
+            glColor3f(1.0, 0.7, 0.7)  # 浅红色
+        else:
+            glColor3f(1.0, 0.0, 0.0)  # 红色
+        
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, 0)
+        glVertex3f(2, 0, 0)
+        glEnd()
+        
+        # X轴箭头
+        glPushMatrix()
+        glTranslatef(2, 0, 0)
+        glRotatef(90, 0, 1, 0)
+        glutSolidCone(0.1, 0.3, 10, 10)
+        glPopMatrix()
+        
+        # 绘制Y轴（绿色）
+        if self._controller_axis == 'y':
+            # 高亮显示
+            glColor3f(0.7, 1.0, 0.7)  # 浅绿色
+        else:
+            glColor3f(0.0, 1.0, 0.0)  # 绿色
+        
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 2, 0)
+        glEnd()
+        
+        # Y轴箭头
+        glPushMatrix()
+        glTranslatef(0, 2, 0)
+        glRotatef(-90, 1, 0, 0)
+        glutSolidCone(0.1, 0.3, 10, 10)
+        glPopMatrix()
+        
+        # 绘制Z轴（蓝色）
+        if self._controller_axis == 'z':
+            # 高亮显示
+            glColor3f(0.7, 0.7, 1.0)  # 浅蓝色
+        else:
+            glColor3f(0.0, 0.0, 1.0)  # 蓝色
+        
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 0, 2)
+        glEnd()
+        
+        # Z轴箭头
+        glPushMatrix()
+        glTranslatef(0, 0, 2)
+        glutSolidCone(0.1, 0.3, 10, 10)
+        glPopMatrix()
+        
+        # 恢复线宽
+        glLineWidth(previous_line_width)
+        
+        glEnable(GL_LIGHTING)
 
     def _draw_scale_gizmo(self):
         """绘制缩放控制器"""
@@ -870,7 +914,18 @@ class OpenGLView(QOpenGLWidget):
         # 按下空格键切换坐标系
         elif event.key() == Qt.Key_Space:
             self._use_local_coords = not self._use_local_coords
+            
+            # 在状态栏显示当前坐标系模式
+            parent_window = self.window()
+            if hasattr(parent_window, 'statusBar'):
+                coord_system = "局部坐标系" if self._use_local_coords else "全局坐标系"
+                parent_window.statusBar().showMessage(f"当前模式: {coord_system}", 2000)
+            
+            # 更新控制器显示
+            self._update_controllor_raycaster()
             self.update()
+            
+            print(f"坐标系已切换为: {'局部坐标系' if self._use_local_coords else '全局坐标系'}")
             
         # 按下Escape键取消选择
         elif event.key() == Qt.Key_Escape:
@@ -912,7 +967,7 @@ class OpenGLView(QOpenGLWidget):
     def _update_controllor_raycaster(self):
         """更新控制器射线投射器"""
         operation_mode = self._scene_viewmodel.operation_mode
-        selected_geo = self._scene_viewmodel.selected_geometry  # 确保使用correct属性名
+        selected_geo = self._scene_viewmodel.selected_geometry
         
         # 清空现有的控制器几何体
         self._controller_geometries = []
@@ -1016,50 +1071,84 @@ class OpenGLView(QOpenGLWidget):
             self._controller_geometries = [x_axis, x_arrow, y_axis, y_arrow, z_axis, z_arrow]
         
         elif operation_mode == OperationMode.ROTATE:
-            # 为旋转控制器创建三个圆柱体
-            radius = 1.5
-            thickness = 0.1  # 圆柱体厚度
+            # 完全照搬平移控制器的逻辑
+            scale_factor = 2.0
+            axis_length = 2.0 * scale_factor
+            arrow_size = 0.25 * scale_factor
             
-            # X轴旋转环（红色）- YZ平面
-            x_ring = Geometry(
-                geo_type="cylinder",
+            # X轴旋转控制器（红色）
+            x_axis = Geometry(
+                geo_type="box",
                 name="x_rotation_controller",
-                position=(0, 0, 0),  # 使用相对位置，变换矩阵会处理
-                size=(radius, thickness, radius),  # 半径，高度，半径
-                rotation=(0, 90, 0)  # 旋转使圆柱体轴与X轴对齐
+                position=(axis_length/2, 0, 0),
+                size=(axis_length/2, 0.05, 0.05),
+                rotation=(0, 0, 0)
             )
-            x_ring.tag = "x_rotation"
-            x_ring.material.color = (1.0, 0.0, 0.0, 1.0)  # 红色
-            x_ring.transform_matrix = transform_matrix.copy()
-            x_ring.ring_axis = "x"  # 标记为环的轴向
+            x_axis.tag = "x_rotation"  # 使用不同的tag以区分平移控制器
+            x_axis.material.color = (1.0, 0.0, 0.0, 1.0)  # 红色
+            x_axis.transform_matrix = transform_matrix.copy()
             
-            # Y轴旋转环（绿色）- XZ平面
-            y_ring = Geometry(
-                geo_type="cylinder",
+            # X轴箭头
+            x_arrow = Geometry(
+                geo_type="box",
+                name="x_rotation_arrow",
+                position=(axis_length, 0, 0),
+                size=(arrow_size, arrow_size, arrow_size),
+                rotation=(0, 0, 45)
+            )
+            x_arrow.tag = "x_rotation"
+            x_arrow.material.color = (1.0, 0.0, 0.0, 1.0)  # 红色
+            x_arrow.transform_matrix = transform_matrix.copy()
+            
+            # Y轴旋转控制器（绿色）
+            y_axis = Geometry(
+                geo_type="box",
                 name="y_rotation_controller",
-                position=(0, 0, 0),  # 使用相对位置，变换矩阵会处理
-                size=(radius, thickness, radius),  # 半径，高度，半径
-                rotation=(90, 0, 0)  # 旋转使圆柱体轴与Y轴对齐
+                position=(0, axis_length/2, 0),
+                size=(0.05, axis_length/2, 0.05),
+                rotation=(0, 0, 0)
             )
-            y_ring.tag = "y_rotation"
-            y_ring.material.color = (0.0, 1.0, 0.0, 1.0)  # 绿色
-            y_ring.transform_matrix = transform_matrix.copy()
-            y_ring.ring_axis = "y"  # 标记为环的轴向
+            y_axis.tag = "y_rotation"
+            y_axis.material.color = (0.0, 1.0, 0.0, 1.0)  # 绿色
+            y_axis.transform_matrix = transform_matrix.copy()
             
-            # Z轴旋转环（蓝色）- XY平面
-            z_ring = Geometry(
-                geo_type="cylinder",
+            # Y轴箭头
+            y_arrow = Geometry(
+                geo_type="box",
+                name="y_rotation_arrow",
+                position=(0, axis_length, 0),
+                size=(arrow_size, arrow_size, arrow_size),
+                rotation=(0, 0, 45)
+            )
+            y_arrow.tag = "y_rotation"
+            y_arrow.material.color = (0.0, 1.0, 0.0, 1.0)  # 绿色
+            y_arrow.transform_matrix = transform_matrix.copy()
+            
+            # Z轴旋转控制器（蓝色）
+            z_axis = Geometry(
+                geo_type="box",
                 name="z_rotation_controller",
-                position=(0, 0, 0),  # 使用相对位置，变换矩阵会处理
-                size=(radius, thickness, radius),  # 半径，高度，半径
-                rotation=(0, 0, 0)  # 默认朝向Z轴
+                position=(0, 0, axis_length/2),
+                size=(0.05, 0.05, axis_length/2),
+                rotation=(0, 0, 0)
             )
-            z_ring.tag = "z_rotation"
-            z_ring.material.color = (0.0, 0.0, 1.0, 1.0)  # 蓝色
-            z_ring.transform_matrix = transform_matrix.copy()
-            z_ring.ring_axis = "z"  # 标记为环的轴向
+            z_axis.tag = "z_rotation"
+            z_axis.material.color = (0.0, 0.0, 1.0, 1.0)  # 蓝色
+            z_axis.transform_matrix = transform_matrix.copy()
             
-            self._controller_geometries = [x_ring, y_ring, z_ring]
+            # Z轴箭头
+            z_arrow = Geometry(
+                geo_type="box",
+                name="z_rotation_arrow",
+                position=(0, 0, axis_length),
+                size=(arrow_size, arrow_size, arrow_size),
+                rotation=(45, 0, 0)
+            )
+            z_arrow.tag = "z_rotation"
+            z_arrow.material.color = (0.0, 0.0, 1.0, 1.0)  # 蓝色
+            z_arrow.transform_matrix = transform_matrix.copy()
+            
+            self._controller_geometries = [x_axis, x_arrow, y_axis, y_arrow, z_axis, z_arrow]
         
         elif operation_mode == OperationMode.SCALE:
             # 缩放控制器代码不变...
@@ -1147,7 +1236,7 @@ class OpenGLView(QOpenGLWidget):
             self._controller_geometries
         )
 
-    def _pick_controller(self, screen_x, screen_y):
+    def _pick_controller(self, screen_x, screen_y, just_hover=False):
         """检测是否点击到变换控制器"""
         if self._controllor_raycaster is None:
             self._update_controllor_raycaster()
@@ -1155,176 +1244,302 @@ class OpenGLView(QOpenGLWidget):
         if self._controllor_raycaster is None:
             return None
         
-        # 重置控制器轴和拖动状态
-        self._controller_axis = None
-        self._drag_operation = None
-        self._initial_value = None
+        # 如果仅检测悬停，不重置控制器状态
+        if not just_hover:
+            # 重置控制器轴和拖动状态
+            self._controller_axis = None
+            self._drag_operation = None
+            self._initial_value = None
         
-        # 获取当前选中的对象 - 将 selected_object 修改为 selected_geometry
+        # 获取当前选中的对象
         selected_obj = self._scene_viewmodel.selected_geometry
         if not selected_obj:
             return None
         
-        # 使用控制器射线投射器检测点击
-        result = self._controllor_raycaster.raycast(screen_x, screen_y, self.width(), self.height())
-        
-        if result and result.is_hit():
-            # 查找控制器类型
-            geo = result.geometry
+        try:
+            # 使用控制器射线投射器检测点击
+            result = self._controllor_raycaster.raycast(screen_x, screen_y, self.width(), self.height())
             
-            # 记录初始值，用于撤销功能
-            operation_mode = self._scene_viewmodel.operation_mode
-            
-            if operation_mode == OperationMode.TRANSLATE:
-                self._drag_operation = "translate"
-                self._initial_value = selected_obj.position.copy()
-            
-            elif operation_mode == OperationMode.ROTATE:
-                self._drag_operation = "rotate"
-                self._initial_value = selected_obj.rotation.copy()
+            if result and result.is_hit():
+                # 查找控制器类型
+                geo = result.geometry
                 
-                # 确定旋转轴
-                if hasattr(geo, 'ring_axis'):
-                    self._controller_axis = geo.ring_axis
-                    return geo.ring_axis
+                # 记录初始值，用于撤销功能
+                operation_mode = self._scene_viewmodel.operation_mode
                 
-                # 回退检查tag
+                if operation_mode == OperationMode.TRANSLATE:
+                    if not just_hover:
+                        self._drag_operation = "translate"
+                        self._initial_value = selected_obj.position.copy()
+                
+                elif operation_mode == OperationMode.ROTATE:
+                    if not just_hover:
+                        self._drag_operation = "rotate"
+                        self._initial_value = selected_obj.rotation.copy()
+                    
+                    # 旋转控制器轴检测（基于tag）
+                    if hasattr(geo, 'tag'):
+                        tag = geo.tag
+                        if 'x_rotation' in tag:
+                            self._controller_axis = 'x'
+                            return 'x'
+                        elif 'y_rotation' in tag:
+                            self._controller_axis = 'y'
+                            return 'y'
+                        elif 'z_rotation' in tag:
+                            self._controller_axis = 'z'
+                            return 'z'
+                
+                elif operation_mode == OperationMode.SCALE:
+                    if not just_hover:
+                        self._drag_operation = "scale"
+                        self._initial_value = selected_obj.size.copy()
+                
+                # 标准轴检测
                 if hasattr(geo, 'tag'):
                     tag = geo.tag
-                    if 'x_rotation' in tag:
+                    if 'x_axis' in tag:
                         self._controller_axis = 'x'
                         return 'x'
-                    elif 'y_rotation' in tag:
+                    elif 'y_axis' in tag:
                         self._controller_axis = 'y'
                         return 'y'
-                    elif 'z_rotation' in tag:
+                    elif 'z_axis' in tag:
                         self._controller_axis = 'z'
                         return 'z'
-            
-            elif operation_mode == OperationMode.SCALE:
-                self._drag_operation = "scale"
-                self._initial_value = selected_obj.size.copy()
-            
-            # 标准轴检测
-            if hasattr(geo, 'tag'):
-                tag = geo.tag
-                if 'x_axis' in tag:
-                    self._controller_axis = 'x'
-                    return 'x'
-                elif 'y_axis' in tag:
-                    self._controller_axis = 'y'
-                    return 'y'
-                elif 'z_axis' in tag:
-                    self._controller_axis = 'z'
-                    return 'z'
+        except Exception as e:
+            print(f"控制器拾取错误: {e}")
+            import traceback
+            traceback.print_exc()
         
         # 没有点击到控制器
-        self._drag_operation = None
-        self._initial_value = None
         return None
 
     def _handle_translation_drag(self, geometry, dx, dy):
         """处理平移拖动"""
         # 根据拖动轴和摄像机方向计算拖动量
-        drag_amount = self._calculate_drag_amount(dx, dy, 0.015)  # 增加灵敏度
-        
-        # 获取当前位置
-        current_pos = geometry.position.copy()
+        drag_amount = self._calculate_drag_amount(dx, dy, 0.015)  # 灵敏度系数
         
         # 记录操作前的值（用于撤销功能）
         if self._drag_start_value is None:
-            self._drag_start_value = current_pos.copy()
+            self._drag_start_value = geometry.position.copy()
         
-        # 根据控制器轴应用拖动
-        if self._controller_axis == 'x':
-            if self._use_local_coords:
-                # 局部坐标系
-                local_x = geometry.transform_matrix[:3, 0]
-                current_pos += local_x * drag_amount
-            else:
-                # 全局坐标系
-                current_pos[0] += drag_amount
-        elif self._controller_axis == 'y':
-            if self._use_local_coords:
-                # 局部坐标系
-                local_y = geometry.transform_matrix[:3, 1]
-                current_pos += local_y * drag_amount
-            else:
-                # 全局坐标系
-                current_pos[1] += drag_amount
-        elif self._controller_axis == 'z':
-            if self._use_local_coords:
-                # 局部坐标系
-                local_z = geometry.transform_matrix[:3, 2]
-                current_pos += local_z * drag_amount
-            else:
-                # 全局坐标系
-                current_pos[2] += drag_amount
-                
-        # 更新几何体位置
-        geometry.position = current_pos
+        # 根据当前坐标系模式调用相应的处理函数
+        if self._use_local_coords:
+            self._handle_local_translation(geometry, drag_amount)
+        else:
+            self._handle_global_translation(geometry, drag_amount)
         
         # 通知视图模型对象已更改
         self._scene_viewmodel.notify_object_changed(geometry)
+
+    def _handle_local_translation(self, geometry, drag_amount):
+        """处理局部坐标系中的平移"""
+        current_pos = geometry.position.copy()
+        
+        if self._controller_axis == 'x':
+            # 局部X轴平移
+            local_x = geometry.transform_matrix[:3, 0]
+            local_x_normalized = local_x / np.linalg.norm(local_x)
+            current_pos += local_x_normalized * drag_amount
+        elif self._controller_axis == 'y':
+            # 局部Y轴平移
+            local_y = geometry.transform_matrix[:3, 1]
+            local_y_normalized = local_y / np.linalg.norm(local_y)
+            current_pos += local_y_normalized * drag_amount
+        elif self._controller_axis == 'z':
+            # 局部Z轴平移
+            local_z = geometry.transform_matrix[:3, 2]
+            local_z_normalized = local_z / np.linalg.norm(local_z)
+            current_pos += local_z_normalized * drag_amount
+        
+        # 更新几何体局部位置
+        geometry.position = current_pos
+
+    def _handle_global_translation(self, geometry, drag_amount):
+        """处理全局坐标系中的平移"""
+        # 获取对象当前的全局变换矩阵
+        world_matrix = self._get_world_matrix(geometry)
+        
+        # 应用全局平移
+        translation = np.zeros(3)
+        if self._controller_axis == 'x':
+            translation[0] = drag_amount
+        elif self._controller_axis == 'y':
+            translation[1] = drag_amount
+        elif self._controller_axis == 'z':
+            translation[2] = drag_amount
+        
+        # 创建全局平移矩阵
+        translation_matrix = np.eye(4)
+        translation_matrix[:3, 3] = translation
+        
+        # 应用全局平移到对象的世界矩阵
+        new_world_matrix = translation_matrix @ world_matrix
+        
+        # 计算新的局部变换（考虑父对象的变换）
+        new_local_matrix = self._world_to_local_matrix(new_world_matrix, geometry)
+        
+        # 从局部矩阵中提取新的位置（只更新位置，保持旋转和缩放不变）
+        position, _, _ = self._decompose_matrix(new_local_matrix)
+        
+        # 更新几何体属性
+        geometry.position = position
 
     def _handle_rotation_drag(self, geometry, dx, dy):
         """处理旋转拖动"""
-        # 根据拖动轴和摄像机方向计算旋转量（角度）
-        rotation_amount = self._calculate_drag_amount(dx, dy, 1.0)  # 增加灵敏度
-        
-        # 获取当前旋转
-        current_rotation = geometry.rotation.copy()
+        # 计算拖动量
+        drag_amount = self._calculate_drag_amount(dx, dy, 0.5)  # 旋转灵敏度
         
         # 记录操作前的值（用于撤销功能）
         if self._drag_start_value is None:
-            self._drag_start_value = current_rotation.copy()
+            self._drag_start_value = geometry.rotation.copy()
         
-        # 根据控制器轴应用旋转
-        if self._controller_axis == 'x':
-            current_rotation[0] += rotation_amount
-            # 规范化角度到0-360
-            current_rotation[0] = current_rotation[0] % 360
-        elif self._controller_axis == 'y':
-            current_rotation[1] += rotation_amount
-            current_rotation[1] = current_rotation[1] % 360
-        elif self._controller_axis == 'z':
-            current_rotation[2] += rotation_amount
-            current_rotation[2] = current_rotation[2] % 360
-            
-        # 更新几何体旋转
-        geometry.rotation = current_rotation
+        # 根据当前坐标系模式调用相应的处理函数
+        if self._use_local_coords:
+            self._handle_local_rotation(geometry, drag_amount)
+        else:
+            self._handle_global_rotation(geometry, drag_amount)
         
         # 通知视图模型对象已更改
         self._scene_viewmodel.notify_object_changed(geometry)
 
+    def _handle_local_rotation(self, geometry, drag_amount):
+        """处理局部坐标系中的旋转 - 直接修改欧拉角"""
+        current_rotation = geometry.rotation.copy()
+        
+        if self._controller_axis == 'x':
+            current_rotation[0] += drag_amount
+            current_rotation[0] = current_rotation[0] % 360
+        elif self._controller_axis == 'y':
+            current_rotation[1] += drag_amount
+            current_rotation[1] = current_rotation[1] % 360
+        elif self._controller_axis == 'z':
+            current_rotation[2] += drag_amount
+            current_rotation[2] = current_rotation[2] % 360
+        
+        # 更新几何体旋转
+        geometry.rotation = current_rotation
+
+    def _handle_global_rotation(self, geometry, drag_amount):
+        """处理全局坐标系中的旋转"""
+        # 获取对象当前的全局变换矩阵
+        world_matrix = self._get_world_matrix(geometry)
+        
+        # 提取对象在全局坐标系中的位置（旋转中心）
+        world_position = world_matrix[:3, 3]
+        
+        # 创建全局旋转矩阵（绕各轴的旋转矩阵）
+        angle_rad = np.radians(drag_amount)
+        
+        # 创建旋转矩阵
+        if self._controller_axis == 'x':
+            # 绕全局X轴旋转
+            rotation_matrix = self._create_rotation_matrix_x(angle_rad)
+        elif self._controller_axis == 'y':
+            # 绕全局Y轴旋转
+            rotation_matrix = self._create_rotation_matrix_y(angle_rad)
+        elif self._controller_axis == 'z':
+            # 绕全局Z轴旋转
+            rotation_matrix = self._create_rotation_matrix_z(angle_rad)
+        else:
+            return
+        
+        # 创建平移到旋转中心的矩阵
+        translate_to_origin = np.eye(4)
+        translate_to_origin[:3, 3] = -world_position
+        
+        # 创建从旋转中心平移回的矩阵
+        translate_back = np.eye(4)
+        translate_back[:3, 3] = world_position
+        
+        # 计算新的全局变换矩阵: 先移到旋转中心，应用旋转，再移回原位置
+        new_world_matrix = translate_back @ rotation_matrix @ translate_to_origin @ world_matrix
+        
+        # 计算新的局部变换（考虑父对象的变换）
+        new_local_matrix = self._world_to_local_matrix(new_world_matrix, geometry)
+        
+        # 从局部矩阵中提取新的位置和旋转（只更新这两个，保持缩放不变）
+        position, rotation, _ = self._decompose_matrix(new_local_matrix)
+        
+        # 更新几何体属性
+        geometry.position = position
+        geometry.rotation = rotation
+
     def _handle_scale_drag(self, geometry, dx, dy):
         """处理缩放拖动"""
-        # 根据拖动轴和摄像机方向计算缩放量
-        scale_factor = 1.0 + self._calculate_drag_amount(dx, dy, 0.015)  # 调整灵敏度
-        
-        # 获取当前缩放
-        current_scale = geometry.size.copy()
+        # 计算缩放因子
+        scale_factor = 1.0 + self._calculate_drag_amount(dx, dy, 0.015)
         
         # 记录操作前的值（用于撤销功能）
         if self._drag_start_value is None:
-            self._drag_start_value = current_scale.copy()
+            self._drag_start_value = geometry.size.copy()
         
-        # 根据控制器轴应用缩放，并确保大小不为负值
-        if self._controller_axis == 'x':
-            current_scale[0] *= scale_factor
-            current_scale[0] = max(0.01, current_scale[0])  # 最小尺寸限制
-        elif self._controller_axis == 'y':
-            current_scale[1] *= scale_factor
-            current_scale[1] = max(0.01, current_scale[1])
-        elif self._controller_axis == 'z':
-            current_scale[2] *= scale_factor
-            current_scale[2] = max(0.01, current_scale[2])
-        
-        # 更新几何体缩放
-        geometry.size = current_scale
+        # 根据当前坐标系模式调用相应的处理函数
+        if self._use_local_coords:
+            self._handle_local_scale(geometry, scale_factor)
+        else:
+            self._handle_global_scale(geometry, scale_factor)
         
         # 通知视图模型对象已更改
         self._scene_viewmodel.notify_object_changed(geometry)
+
+    def _handle_local_scale(self, geometry, scale_factor):
+        """处理局部坐标系中的缩放"""
+        current_scale = geometry.size.copy()
+        
+        if self._controller_axis == 'x':
+            current_scale[0] *= scale_factor
+        elif self._controller_axis == 'y':
+            current_scale[1] *= scale_factor
+        elif self._controller_axis == 'z':
+            current_scale[2] *= scale_factor
+        
+        # 确保大小不为负值
+        current_scale = np.maximum(current_scale, np.array([0.01, 0.01, 0.01]))
+        
+        # 更新几何体尺寸
+        geometry.size = current_scale
+
+    def _handle_global_scale(self, geometry, scale_factor):
+        """处理全局坐标系中的缩放"""
+        # 获取对象当前的全局变换矩阵
+        world_matrix = self._get_world_matrix(geometry)
+        
+        # 提取对象在全局坐标系中的位置（缩放中心）
+        world_position = world_matrix[:3, 3]
+        
+        # 创建全局缩放矩阵
+        scale_matrix = np.eye(4)
+        
+        if self._controller_axis == 'x':
+            scale_matrix[0, 0] = scale_factor
+        elif self._controller_axis == 'y':
+            scale_matrix[1, 1] = scale_factor
+        elif self._controller_axis == 'z':
+            scale_matrix[2, 2] = scale_factor
+        
+        # 创建平移到缩放中心的矩阵
+        translate_to_origin = np.eye(4)
+        translate_to_origin[:3, 3] = -world_position
+        
+        # 创建从缩放中心平移回的矩阵
+        translate_back = np.eye(4)
+        translate_back[:3, 3] = world_position
+        
+        # 计算新的全局变换矩阵: 先移到缩放中心，应用缩放，再移回原位置
+        new_world_matrix = translate_back @ scale_matrix @ translate_to_origin @ world_matrix
+        
+        # 计算新的局部变换（考虑父对象的变换）
+        new_local_matrix = self._world_to_local_matrix(new_world_matrix, geometry)
+        
+        # 从局部矩阵中提取新的位置、旋转和缩放
+        position, rotation, scale = self._decompose_matrix(new_local_matrix)
+        
+        # 更新几何体属性
+        geometry.position = position
+        geometry.rotation = rotation
+        geometry.size = scale
 
     def _calculate_drag_amount(self, dx, dy, sensitivity):
         """
@@ -1383,7 +1598,7 @@ class OpenGLView(QOpenGLWidget):
     
     def _draw_transform_controller(self, geometry):
         """
-        直接绘制变换控制器（不受深度测试影响）
+        绘制变换控制器
         
         参数:
             geometry: 选中的几何体
@@ -1394,30 +1609,68 @@ class OpenGLView(QOpenGLWidget):
         glPushMatrix()
         
         # 根据坐标系选择决定变换控制器的位置和方向
-        if hasattr(self, '_use_local_coords') and self._use_local_coords:
+        if self._use_local_coords:
             # 使用局部坐标系 - 使用物体的完整变换矩阵
             matrix = geometry.transform_matrix.T.flatten().tolist()
             glMultMatrixf(matrix)
         else:
             # 使用全局坐标系 - 只移动到物体位置，不旋转
-            glTranslatef(*geometry.get_world_position())
+            world_position = self._get_world_matrix(geometry)[:3, 3]
+            glTranslatef(*world_position)
         
         # 设置混合模式，使控制器在几何体上方清晰可见
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
+        # 绘制坐标系指示器
+        glDisable(GL_LIGHTING)
+        
+        # 绘制坐标系标志
+        coord_label = "局部坐标系" if self._use_local_coords else "全局坐标系"
+        self._draw_coordinate_label(coord_label)
+        
+        glEnable(GL_LIGHTING)
+        
+        # 绘制相应的控制器
         if operation_mode == OperationMode.TRANSLATE:
-            # 绘制平移控制器（三个轴）
             self._draw_translation_gizmo()
         elif operation_mode == OperationMode.ROTATE:
-            # 绘制旋转控制器（三个环）
             self._draw_rotation_gizmo()
         elif operation_mode == OperationMode.SCALE:
-            # 绘制缩放控制器（三个轴）
             self._draw_scale_gizmo()
         
         # 恢复矩阵
-        glPopMatrix() 
+        glPopMatrix()
+
+    def _draw_coordinate_label(self, label_text):
+        """绘制坐标系标签"""
+        # 该函数需要根据您的OpenGL文本渲染方式实现
+        # 这里提供一个简单的示意
+        
+        # 设置2D正交投影
+        glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
+        glLoadIdentity()
+        glOrtho(0, self.width(), 0, self.height(), -1, 1)
+        
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadIdentity()
+        
+        # 绘制坐标系状态文本
+        coord_color = (1.0, 1.0, 0.0) if self._use_local_coords else (0.0, 1.0, 1.0)
+        glColor3f(*coord_color)
+        
+        # 在屏幕左下角显示坐标系状态
+        # 具体的文本渲染需要根据您的实现方式调整
+        # 这里只是一个示例占位
+        
+        # 恢复投影和模型视图矩阵
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        
+        glMatrixMode(GL_MODELVIEW)
+        glPopMatrix()
 
     def dragEnterEvent(self, event):
         """处理拖拽进入事件"""
@@ -1763,3 +2016,153 @@ class OpenGLView(QOpenGLWidget):
             # 内圆顶点
             glVertex3f(inner_radius * cos_val, inner_radius * sin_val, -half_thickness)
         glEnd()
+
+    def _get_world_matrix(self, geometry):
+        """
+        计算对象的世界变换矩阵（考虑所有父对象的变换）
+        
+        参数:
+            geometry: 几何体对象
+            
+        返回:
+            4x4 世界变换矩阵
+        """
+        # 如果对象没有父对象，直接返回其变换矩阵
+        if not hasattr(geometry, 'parent') or geometry.parent is None:
+            return geometry.transform_matrix.copy()
+        
+        # 递归获取父对象的世界变换矩阵
+        parent_world_matrix = self._get_world_matrix(geometry.parent)
+        
+        # 应用父对象的变换，然后是当前对象的变换
+        return parent_world_matrix @ geometry.transform_matrix
+
+    def _world_to_local_matrix(self, world_matrix, geometry):
+        """
+        将世界变换矩阵转换为局部变换矩阵
+        
+        参数:
+            world_matrix: 4x4 世界变换矩阵
+            geometry: 几何体对象
+            
+        返回:
+            4x4 局部变换矩阵
+        """
+        # 如果对象没有父对象，世界矩阵即为局部矩阵
+        if not hasattr(geometry, 'parent') or geometry.parent is None:
+            return world_matrix.copy()
+        
+        # 获取父对象的世界变换矩阵
+        parent_world_matrix = self._get_world_matrix(geometry.parent)
+        
+        # 计算父对象世界变换矩阵的逆
+        parent_world_matrix_inv = np.linalg.inv(parent_world_matrix)
+        
+        # 应用父对象逆变换，将世界矩阵转换为局部矩阵
+        return parent_world_matrix_inv @ world_matrix
+
+    def _decompose_matrix(self, matrix):
+        """
+        将4x4变换矩阵分解为位置、旋转和缩放
+        
+        参数:
+            matrix: 4x4变换矩阵
+            
+        返回:
+            (position, rotation, scale): 分解后的位置、旋转（欧拉角）和缩放
+        """
+        # 提取位置
+        position = matrix[:3, 3]
+        
+        # 提取旋转矩阵
+        rotation_matrix = matrix[:3, :3]
+        
+        # 提取缩放（列向量的长度）
+        scale = np.array([
+            np.linalg.norm(rotation_matrix[:, 0]),
+            np.linalg.norm(rotation_matrix[:, 1]),
+            np.linalg.norm(rotation_matrix[:, 2])
+        ])
+        
+        # 归一化旋转矩阵（移除缩放）
+        rotation_matrix_normalized = np.column_stack([
+            rotation_matrix[:, 0] / scale[0],
+            rotation_matrix[:, 1] / scale[1],
+            rotation_matrix[:, 2] / scale[2]
+        ])
+        
+        # 从归一化旋转矩阵计算欧拉角
+        rotation = self._matrix_to_euler_angles(rotation_matrix_normalized)
+        
+        return position, rotation, scale
+
+    def _matrix_to_euler_angles(self, rotation_matrix):
+        """
+        将3x3旋转矩阵转换为欧拉角（XYZ顺序，度数）
+        
+        参数:
+            rotation_matrix: 3x3旋转矩阵
+            
+        返回:
+            np.array([rx, ry, rz]): 欧拉角（度数）- XYZ顺序
+        """
+        # 从旋转矩阵中提取欧拉角 - XYZ顺序
+        # 说明: 先绕X轴，再绕Y轴，最后绕Z轴
+        
+        # 处理万向节锁的情况
+        if abs(rotation_matrix[0, 2]) >= 1.0 - 1e-6:
+            # 万向节锁
+            sign = -1 if rotation_matrix[0, 2] < 0 else 1
+            x = 0
+            y = sign * np.pi/2
+            z = sign * np.arctan2(-rotation_matrix[1, 0], rotation_matrix[1, 1])
+        else:
+            y = np.arcsin(rotation_matrix[0, 2])
+            cos_y = np.cos(y)
+            x = np.arctan2(-rotation_matrix[1, 2] / cos_y, rotation_matrix[2, 2] / cos_y)
+            z = np.arctan2(-rotation_matrix[0, 1] / cos_y, rotation_matrix[0, 0] / cos_y)
+        
+        # 转换为度数
+        return np.array([np.degrees(x), np.degrees(y), np.degrees(z)])
+
+    # 创建绕各轴旋转的矩阵函数
+    def _create_rotation_matrix_x(self, angle_rad):
+        """创建绕X轴旋转的4x4矩阵"""
+        matrix = np.eye(4)
+        c, s = np.cos(angle_rad), np.sin(angle_rad)
+        matrix[1:3, 1:3] = np.array([[c, -s], [s, c]])
+        return matrix
+
+    def _create_rotation_matrix_y(self, angle_rad):
+        """创建绕Y轴旋转的4x4矩阵"""
+        matrix = np.eye(4)
+        c, s = np.cos(angle_rad), np.sin(angle_rad)
+        matrix[0, 0] = c
+        matrix[0, 2] = s
+        matrix[2, 0] = -s
+        matrix[2, 2] = c
+        return matrix
+
+    def _create_rotation_matrix_z(self, angle_rad):
+        """创建绕Z轴旋转的4x4矩阵"""
+        matrix = np.eye(4)
+        c, s = np.cos(angle_rad), np.sin(angle_rad)
+        matrix[0, 0] = c
+        matrix[0, 1] = -s
+        matrix[1, 0] = s
+        matrix[1, 1] = c
+        return matrix
+
+    def _on_coordinate_system_changed(self, use_local_coords):
+        """处理坐标系模式变化"""
+        self._use_local_coords = use_local_coords
+        # 更新控制器
+        self._update_controllor_raycaster()
+        # 重绘场景
+        self.update()
+        
+        # 在状态栏显示当前坐标系模式
+        parent_window = self.window()
+        if hasattr(parent_window, 'statusBar'):
+            coord_system = "局部坐标系" if self._use_local_coords else "全局坐标系"
+            parent_window.statusBar().showMessage(f"当前模式: {coord_system}", 2000)

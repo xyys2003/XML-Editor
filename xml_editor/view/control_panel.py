@@ -65,7 +65,7 @@ class ControlPanel(QWidget):
             parent_layout: 父布局
         """
         operation_group = QGroupBox("操作模式")
-        # 使用网格布局，2行2列
+        # 使用网格布局，3行2列（增加一行用于坐标系切换）
         operation_layout = QGridLayout(operation_group)
         operation_layout.setContentsMargins(4, 4, 4, 4)
         operation_layout.setSpacing(4)
@@ -81,6 +81,13 @@ class ControlPanel(QWidget):
         operation_layout.addWidget(self._translate_radio, 0, 1)
         operation_layout.addWidget(self._rotate_radio, 1, 0)
         operation_layout.addWidget(self._scale_radio, 1, 1)
+        
+        # 创建坐标系切换按钮
+        self._coord_sys_button = QPushButton("局部坐标系")
+        self._coord_sys_button.setCheckable(True)  # 使按钮可以切换状态
+        self._coord_sys_button.setChecked(True)    # 默认使用局部坐标系
+        self._coord_sys_button.clicked.connect(self._on_coord_system_changed)
+        operation_layout.addWidget(self._coord_sys_button, 2, 0, 1, 2)  # 按钮跨越两列
         
         # 创建按钮组
         self._operation_button_group = QButtonGroup(self)
@@ -211,4 +218,20 @@ class ControlPanel(QWidget):
         elif operation_mode == OperationMode.SCALE:
             self._scale_radio.setChecked(True)
         
-        self._operation_button_group.blockSignals(False) 
+        self._operation_button_group.blockSignals(False)
+    
+    def _on_coord_system_changed(self):
+        """处理坐标系切换"""
+        # 切换按钮状态
+        use_local = self._coord_sys_button.isChecked()
+        
+        # 更新按钮文本和样式
+        if use_local:
+            self._coord_sys_button.setText("局部坐标系")
+            self._coord_sys_button.setStyleSheet("background-color: #e0f0e0; color: #006000;")  # 绿色调
+        else:
+            self._coord_sys_button.setText("全局坐标系")
+            self._coord_sys_button.setStyleSheet("background-color: #e0e0f0; color: #000060;")  # 蓝色调
+        
+        # 通知视图模型坐标系已更改
+        self._control_viewmodel.use_local_coords = use_local 

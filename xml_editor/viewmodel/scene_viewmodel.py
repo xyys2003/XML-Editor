@@ -26,6 +26,7 @@ class SceneViewModel(QObject):
     selectionChanged = pyqtSignal(object)  # 选中对象变化
     operationModeChanged = pyqtSignal(object)  # 操作模式变化
     objectChanged = pyqtSignal(object)  # 对象属性变化
+    coordinateSystemChanged = pyqtSignal(bool)  # 坐标系变化信号
     
     def __init__(self):
         super().__init__()
@@ -40,6 +41,7 @@ class SceneViewModel(QObject):
             'view_matrix': np.eye(4),
             'projection_matrix': np.eye(4)
         }
+        self._use_local_coords = True
     
     @property
     def geometries(self):
@@ -98,6 +100,19 @@ class SceneViewModel(QObject):
         # 如果操作模式变化，也发出变换模式变化信号
         if old_value != value:
             self.operationModeChanged.emit(value)
+    
+    @property
+    def use_local_coords(self):
+        """获取当前坐标系模式，True表示局部坐标系，False表示全局坐标系"""
+        return self._use_local_coords
+    
+    @use_local_coords.setter
+    def use_local_coords(self, value):
+        """设置坐标系模式"""
+        if self._use_local_coords != value:
+            self._use_local_coords = value
+            # 通知OpenGL视图更新坐标系模式
+            self.coordinateSystemChanged.emit(value)
     
     def set_camera_config(self, config):
         """设置摄像机配置"""
