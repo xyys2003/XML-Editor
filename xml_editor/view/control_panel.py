@@ -6,9 +6,11 @@
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                           QGroupBox, QRadioButton, QComboBox, QLabel, 
-                          QButtonGroup, QToolButton, QGridLayout)
-from PyQt5.QtCore import Qt, QMimeData
-from PyQt5.QtGui import QDrag, QPixmap
+                          QButtonGroup, QToolButton, QGridLayout, QFileDialog, QMessageBox,
+                          QDialog, QListWidget, QListWidgetItem, QAbstractItemView, QApplication)
+from PyQt5.QtCore import Qt, QMimeData, QSize
+from PyQt5.QtGui import QDrag, QPixmap, QIcon
+import os
 
 from ..model.geometry import OperationMode, GeometryType
 
@@ -56,6 +58,29 @@ class ControlPanel(QWidget):
         
         # 底部填充空间
         main_layout.addStretch()
+        
+        # 添加存档相关的按钮组
+        save_group = QGroupBox("存档管理")
+        save_layout = QVBoxLayout(save_group)
+        
+        # 自动存档按钮
+        self.autoSaveButton = QPushButton("创建存档点")
+        self.autoSaveButton.setToolTip("以时间戳创建存档")
+        self.autoSaveButton.clicked.connect(self.auto_save_state)
+        save_layout.addWidget(self.autoSaveButton)
+        
+        # 显示最近存档按钮
+        self.showRecentSavesButton = QPushButton("查看存档")
+        self.showRecentSavesButton.setToolTip("查看最近10个存档")
+        self.showRecentSavesButton.clicked.connect(self.show_recent_saves)
+        save_layout.addWidget(self.showRecentSavesButton)
+        
+        # 添加到主布局
+        main_layout.addWidget(save_group)
+        
+        # 连接视图模型的信号
+        self._control_viewmodel.saveStateCompleted.connect(self.on_save_completed)
+        self._control_viewmodel.loadStateCompleted.connect(self.on_load_completed)
     
     def _create_operation_tools(self, parent_layout):
         """
@@ -235,3 +260,163 @@ class ControlPanel(QWidget):
         
         # 通知视图模型坐标系已更改
         self._control_viewmodel.use_local_coords = use_local 
+
+    def save_state(self):
+        """
+        打开文件对话框并保存当前状态
+        """
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "保存几何体存档", "", "JSON文件 (*.json)"
+        )
+        
+        if file_path:
+            self._control_viewmodel.save_state_to_json(file_path)
+
+    def load_state(self):
+        """
+        打开文件对话框并加载状态
+        """
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "加载几何体存档", "", "JSON文件 (*.json)"
+        )
+        
+        if file_path:
+            self._control_viewmodel.load_state_from_json(file_path)
+
+    def on_save_completed(self, file_path):
+        """
+        保存完成后的处理
+        """
+        QMessageBox.information(self, "保存成功", f"几何体存档已保存到:\n{file_path}")
+
+    def on_load_completed(self, success):
+        """
+        加载完成后的处理
+        """
+        if success:
+            QMessageBox.information(self, "加载成功", "几何体存档已成功加载")
+        else:
+            QMessageBox.warning(self, "加载失败", "无法加载几何体存档，请检查文件格式")
+
+    def auto_save_state(self):
+        """自动创建存档点"""
+        try:
+            file_path = self._control_viewmodel.auto_save_state()
+            if file_path:
+                QMessageBox.information(self, "存档成功", f"已创建存档:\n{os.path.basename(file_path)}")
+            else:
+                QMessageBox.warning(self, "存档失败", "创建存档失败，请查看控制台日志")
+        except Exception as e:
+            QMessageBox.critical(self, "存档错误", f"创建存档时发生错误：\n{str(e)}")
+    
+    def show_recent_saves(self):
+        """显示最近存档对话框"""
+        dialog = SavesDialog(self._control_viewmodel, self)
+        if dialog.exec_() == QDialog.Accepted and dialog.selected_save:
+            # 加载选中的存档
+            self._control_viewmodel.load_state_from_json(dialog.selected_save)
+
+
+class SavesDialog(QDialog):
+    """最近存档对话框"""
+    
+    def __init__(self, control_viewmodel, parent=None):
+        super().__init__(parent)
+        self.control_viewmodel = control_viewmodel
+        self.selected_save = None
+        
+        self.setWindowTitle("最近存档")
+        self.setMinimumSize(400, 300)
+        
+        self._init_ui()
+        self._load_saves()
+    
+    def _init_ui(self):
+        """初始化对话框UI"""
+        layout = QVBoxLayout(self)
+        
+        # 创建列表控件
+        self.savesList = QListWidget()
+        self.savesList.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.savesList.setIconSize(QSize(24, 24))
+        self.savesList.itemDoubleClicked.connect(self._on_item_double_clicked)
+        layout.addWidget(self.savesList)
+        
+        # 按钮布局
+        button_layout = QHBoxLayout()
+        
+        # 加载按钮
+        self.loadButton = QPushButton("加载")
+        self.loadButton.clicked.connect(self._on_load_clicked)
+        button_layout.addWidget(self.loadButton)
+        
+        # 取消按钮
+        self.cancelButton = QPushButton("取消")
+        self.cancelButton.clicked.connect(self.reject)
+        button_layout.addWidget(self.cancelButton)
+        
+        layout.addLayout(button_layout)
+    
+    def _load_saves(self):
+        """加载最近的存档列表"""
+        self.savesList.clear()
+        
+        # 获取最近10个存档
+        recent_saves = self.control_viewmodel.get_recent_saves(10)
+        
+        if not recent_saves:
+            # 如果没有存档，添加提示
+            item = QListWidgetItem("没有找到存档")
+            item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+            self.savesList.addItem(item)
+            return
+        
+        # 为每个存档创建列表项
+        for save_path in recent_saves:
+            save_info = self.control_viewmodel.get_save_info(save_path)
+            
+            # 创建列表项
+            item_text = f"{save_info['name']}\n{save_info['time']}\n几何体数量: {save_info['geometry_count']}"
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.UserRole, save_path)
+            
+            self.savesList.addItem(item)
+    
+    def _on_item_double_clicked(self, item):
+        """处理列表项双击事件"""
+        save_path = item.data(Qt.UserRole)
+        if save_path:
+            self.selected_save = save_path
+            self.accept()
+    
+    def _on_load_clicked(self):
+        """处理加载按钮点击事件"""
+        selected_items = self.savesList.selectedItems()
+        if selected_items:
+            save_path = selected_items[0].data(Qt.UserRole)
+            if save_path:
+                # 显示加载中提示
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                
+                # 打印文件内容（用于调试）
+                print(f"正在加载文件: {save_path}")
+                self.control_viewmodel.print_save_content(save_path)
+                
+                # 加载文件
+                success = self.control_viewmodel.load_state_from_json(save_path)
+                
+                # 恢复鼠标指针
+                QApplication.restoreOverrideCursor()
+                
+                # 显示结果
+                if success:
+                    QMessageBox.information(self, "加载成功", "几何体存档已成功加载")
+                    self.selected_save = save_path
+                    self.accept()
+                else:
+                    QMessageBox.warning(self, "加载失败", 
+                                        "无法加载几何体存档，请查看控制台日志")
+            else:
+                QMessageBox.warning(self, "无效文件", "选择的存档文件路径无效")
+        else:
+            QMessageBox.information(self, "提示", "请先选择一个存档") 

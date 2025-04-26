@@ -58,6 +58,9 @@ class MainWindow(QMainWindow):
         
         # 添加状态栏
         self.statusBar().showMessage("就绪")
+        
+        # 记录当前打开的文件
+        self.current_file = None
     
     def _setup_dock_widgets(self):
         """设置停靠窗口"""
@@ -110,11 +113,6 @@ class MainWindow(QMainWindow):
         save_as_action.setShortcut(QKeySequence.SaveAs)
         save_as_action.triggered.connect(self._save_file_as)
         file_menu.addAction(save_as_action)
-        
-        # 导出为MuJoCo XML
-        export_action = QAction("导出为MuJoCo XML...", self)
-        export_action.triggered.connect(self._export_mujoco)
-        file_menu.addAction(export_action)
         
         # 分隔线
         file_menu.addSeparator()
@@ -193,6 +191,10 @@ class MainWindow(QMainWindow):
         
         # 清空当前场景
         self.scene_viewmodel.geometries = []
+        # 重置当前文件
+        self.current_file = None
+        # 更新窗口标题
+        self.setWindowTitle("MuJoCo场景编辑器")
         self.statusBar().showMessage("已创建新场景")
     
     def _open_file(self):
@@ -203,35 +205,30 @@ class MainWindow(QMainWindow):
         
         if filename:
             if self.scene_viewmodel.load_scene(filename):
+                # 记录当前打开的文件
+                self.current_file = filename
+                # 更新窗口标题以显示当前文件名
+                self.setWindowTitle(f"MuJoCo场景编辑器 - {os.path.basename(filename)}")
                 self.statusBar().showMessage(f"已加载场景: {os.path.basename(filename)}")
             else:
                 QMessageBox.warning(self, "加载错误", "无法加载场景文件。")
     
     def _save_file(self):
         """保存文件"""
-        # 这里需要先实现一个简单的文件管理机制
-        # 暂时直接调用另存为
-        self._save_file_as()
+        # 如果已有当前文件，直接保存到该文件
+        if self.current_file:
+            if self.scene_viewmodel.save_scene(self.current_file):
+                self.statusBar().showMessage(f"已保存场景: {os.path.basename(self.current_file)}")
+            else:
+                QMessageBox.warning(self, "保存错误", "无法保存场景文件。")
+        else:
+            # 如果没有当前文件，则调用另存为
+            self._save_file_as()
     
     def _save_file_as(self):
         """另存为"""
         filename, _ = QFileDialog.getSaveFileName(
-            self, "保存场景", "", "scene文件 (*.scene)"
-        )
-        
-        if filename:
-            if not filename.lower().endswith(('.scene')):
-                filename += '.scene'
-                
-            if self.scene_viewmodel.save_scene(filename):
-                self.statusBar().showMessage(f"已保存场景: {os.path.basename(filename)}")
-            else:
-                QMessageBox.warning(self, "保存错误", "无法保存场景文件。")
-    
-    def _export_mujoco(self):
-        """导出为MuJoCo XML格式"""
-        filename, _ = QFileDialog.getSaveFileName(
-            self, "导出为MuJoCo XML", "", "XML文件 (*.xml);;所有文件 (*)"
+            self, "保存场景", "", "XML文件 (*.xml);;所有文件 (*)"
         )
         
         if filename:
@@ -239,9 +236,13 @@ class MainWindow(QMainWindow):
                 filename += '.xml'
                 
             if self.scene_viewmodel.save_scene(filename):
-                self.statusBar().showMessage(f"已导出场景: {os.path.basename(filename)}")
+                # 更新当前文件
+                self.current_file = filename
+                # 更新窗口标题
+                self.setWindowTitle(f"MuJoCo场景编辑器 - {os.path.basename(filename)}")
+                self.statusBar().showMessage(f"已保存场景: {os.path.basename(filename)}")
             else:
-                QMessageBox.warning(self, "导出错误", "无法导出场景文件。")
+                QMessageBox.warning(self, "保存错误", "无法保存场景文件。")
     
     def _copy(self):
         """复制当前选中的几何体"""

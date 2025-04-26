@@ -276,7 +276,6 @@ class HierarchyTree(QTreeWidget):
             create_capsule_action = create_menu.addAction("胶囊体")
             create_plane_action = create_menu.addAction("平面")
             create_ellipsoid_action = create_menu.addAction("椭球体")
-            create_triangle_action = create_menu.addAction("三角形")
             
             # 粘贴功能
             paste_action = menu.addAction("粘贴")
@@ -311,7 +310,6 @@ class HierarchyTree(QTreeWidget):
                     create_capsule_action = create_menu.addAction("胶囊体")
                     create_plane_action = create_menu.addAction("平面")
                     create_ellipsoid_action = create_menu.addAction("椭球体")
-                    create_triangle_action = create_menu.addAction("三角形")
                     menu.addSeparator()
                     
                     # 粘贴功能
@@ -370,8 +368,7 @@ class HierarchyTree(QTreeWidget):
                 create_cylinder_action: GeometryType.CYLINDER,
                 create_capsule_action: GeometryType.CAPSULE,
                 create_plane_action: GeometryType.PLANE,
-                create_ellipsoid_action: GeometryType.ELLIPSOID,
-                create_triangle_action: GeometryType.TRIANGLE
+                create_ellipsoid_action: GeometryType.ELLIPSOID
             }
             
             if action == create_group_action:

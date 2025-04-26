@@ -131,6 +131,10 @@ class PropertyViewModel(QObject):
         if self._selected_object is None:
             return False
         
+        # 类型属性不允许修改
+        if property_name == "type":
+            return False
+            
         # 基本属性
         if property_name == "name":
             self._selected_object.name = value
@@ -187,7 +191,7 @@ class PropertyViewModel(QObject):
         else:
             return False
         
-        # 通知场景模型对象已更改
+        # 通知场景模型对象已更改，这会触发所有变换矩阵的更新
         self._scene_model.notify_object_changed(self._selected_object)
         return True
     

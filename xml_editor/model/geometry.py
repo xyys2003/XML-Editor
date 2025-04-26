@@ -180,10 +180,17 @@ class BaseGeometry:
     
     def update_transform_matrix(self):
         """更新变换矩阵，考虑位置、旋转和父节点"""
+        # 先更新自身的局部变换矩阵
         self._update_transform()
+        
         # 如果有父节点，需要考虑父节点的变换
         if self.parent is not None and hasattr(self.parent, 'transform_matrix'):
             self.transform_matrix = self.parent.transform_matrix @ self.transform_matrix
+        
+        # 递归更新所有子节点的变换矩阵
+        for child in self.children:
+            if hasattr(child, 'update_transform_matrix'):
+                child.update_transform_matrix()
     
     def get_all_geometries(self):
         """获取所有子几何体（包括自己）"""
@@ -199,6 +206,16 @@ class BaseGeometry:
     def get_world_position(self):
         """获取世界坐标系中的位置"""
         return self.transform_matrix[:3, 3]
+
+    def get_specific_properties(self):
+        """
+        获取几何体特有的属性
+        
+        返回:
+            dict: 包含几何体特有属性的字典
+        """
+        # 基础实现返回空字典，由具体子类重写
+        return {}
 
 
 class Geometry(BaseGeometry):

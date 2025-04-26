@@ -303,7 +303,7 @@ class OpenGLView(QOpenGLWidget):
         """
         # 保存当前矩阵
         glPushMatrix()
-        
+
         # 应用几何体的变换
         if hasattr(geometry, 'transform_matrix'):
             # 将NumPy矩阵转换为OpenGL兼容的格式
@@ -320,12 +320,14 @@ class OpenGLView(QOpenGLWidget):
                 self._draw_geometry_by_type(geometry, geometry == self._scene_viewmodel.selected_geometry)
         
         # 递归绘制子对象
-        if hasattr(geometry, 'children'):
-            for child in geometry.children:
-                self._draw_geometry(child)
+
         
         # 恢复矩阵
         glPopMatrix()
+
+        if hasattr(geometry, 'children'):
+            for child in geometry.children:
+                self._draw_geometry(child)
     
     def _draw_geometry_by_type(self, geometry, selected):
         """

@@ -210,6 +210,14 @@ class GeometryRaycaster:
         
         # 获取旋转矩阵
         rotation_matrix = geometry.transform_matrix[:3, :3]
+        if geometry.parent:
+            parent_transform = geometry.parent.transform_matrix
+            # 提取父变换中的旋转部分
+            parent_rotation = parent_transform[:3, :3]
+            # 组合旋转
+            rotation_matrix = parent_rotation @ rotation_matrix                    # 更新中心位置
+            center = parent_transform @ np.append(geometry.position, 1)
+            center = center[:3]
         
         # 转换射线到盒子的局部坐标系
         local_start, local_direction = self.transform_ray_to_local(ray_origin, ray_direction, center, rotation_matrix)
@@ -261,9 +269,23 @@ class GeometryRaycaster:
     
     def _intersect_sphere(self, geometry, ray_origin, ray_direction) -> RaycastResult:
         """球体碰撞检测"""
-        # 球心在世界坐标系中的位置
+        # 从世界坐标系获取几何体数据
         center = geometry.get_world_position()
-        radius = geometry.size[0]
+        size = geometry.size
+        
+        # 获取旋转矩阵
+        rotation_matrix = geometry.transform_matrix[:3, :3]
+        if geometry.parent:
+            parent_transform = geometry.parent.transform_matrix
+            # 提取父变换中的旋转部分
+            parent_rotation = parent_transform[:3, :3]
+            # 组合旋转
+            rotation_matrix = parent_rotation @ rotation_matrix                    # 更新中心位置
+            center = parent_transform @ np.append(geometry.position, 1)
+            center = center[:3]
+        # 球心在世界坐标系中的位置
+
+        radius = size[0]
         
         hit_result = np.array([0.0, 0.0, 0.0, -1.0])
         
@@ -301,11 +323,20 @@ class GeometryRaycaster:
     def _intersect_cylinder(self, geometry, ray_origin, ray_direction) -> RaycastResult:
         """圆柱体碰撞检测"""
         # 从世界坐标系获取几何体数据
+
         center = geometry.get_world_position()
         size = geometry.size
         
         # 获取旋转矩阵
         rotation_matrix = geometry.transform_matrix[:3, :3]
+        if geometry.parent:
+            parent_transform = geometry.parent.transform_matrix
+            # 提取父变换中的旋转部分
+            parent_rotation = parent_transform[:3, :3]
+            # 组合旋转
+            rotation_matrix = parent_rotation @ rotation_matrix                    # 更新中心位置
+            center = parent_transform @ np.append(geometry.position, 1)
+            center = center[:3]
         
         # 检查是否是旋转控制器
         is_rotation_controller = hasattr(geometry, 'tag') and 'rotation' in getattr(geometry, 'tag', '')
@@ -409,12 +440,20 @@ class GeometryRaycaster:
     def _intersect_plane(self, geometry, ray_origin, ray_direction) -> RaycastResult:
         """平面碰撞检测"""
         # 从世界坐标系获取几何体数据
+        # 从世界坐标系获取几何体数据
         center = geometry.get_world_position()
         size = geometry.size
         
         # 获取旋转矩阵
         rotation_matrix = geometry.transform_matrix[:3, :3]
-        
+        if geometry.parent:
+            parent_transform = geometry.parent.transform_matrix
+            # 提取父变换中的旋转部分
+            parent_rotation = parent_transform[:3, :3]
+            # 组合旋转
+            rotation_matrix = parent_rotation @ rotation_matrix                    # 更新中心位置
+            center = parent_transform @ np.append(geometry.position, 1)
+            center = center[:3]
         # 转换射线到平面的局部坐标系
         local_start, local_direction = self.transform_ray_to_local(ray_origin, ray_direction, center, rotation_matrix)
         
@@ -452,11 +491,20 @@ class GeometryRaycaster:
     def _intersect_ellipsoid(self, geometry, ray_origin, ray_direction) -> RaycastResult:
         """椭球体碰撞检测"""
         # 从世界坐标系获取几何体数据
+        # 从世界坐标系获取几何体数据
         center = geometry.get_world_position()
         size = geometry.size
         
         # 获取旋转矩阵
         rotation_matrix = geometry.transform_matrix[:3, :3]
+        if geometry.parent:
+            parent_transform = geometry.parent.transform_matrix
+            # 提取父变换中的旋转部分
+            parent_rotation = parent_transform[:3, :3]
+            # 组合旋转
+            rotation_matrix = parent_rotation @ rotation_matrix                    # 更新中心位置
+            center = parent_transform @ np.append(geometry.position, 1)
+            center = center[:3]
         
         # 转换射线到椭球体的局部坐标系
         local_start, local_direction = self.transform_ray_to_local(ray_origin, ray_direction, center, rotation_matrix)
@@ -560,11 +608,20 @@ class GeometryRaycaster:
     def _intersect_capsule(self, geometry, ray_origin, ray_direction) -> RaycastResult:
         """胶囊体碰撞检测"""
         # 从世界坐标系获取几何体数据
+        # 从世界坐标系获取几何体数据
         center = geometry.get_world_position()
         size = geometry.size
         
         # 获取旋转矩阵
         rotation_matrix = geometry.transform_matrix[:3, :3]
+        if geometry.parent:
+            parent_transform = geometry.parent.transform_matrix
+            # 提取父变换中的旋转部分
+            parent_rotation = parent_transform[:3, :3]
+            # 组合旋转
+            rotation_matrix = parent_rotation @ rotation_matrix                    # 更新中心位置
+            center = parent_transform @ np.append(geometry.position, 1)
+            center = center[:3]
         
         # 转换射线到胶囊体的局部坐标系
         local_start, local_direction = self.transform_ray_to_local(ray_origin, ray_direction, center, rotation_matrix)
@@ -698,11 +755,20 @@ class GeometryRaycaster:
     def _intersect_rotation_ring(self, geometry, ray_origin, ray_direction) -> RaycastResult:
         """环形旋转控制器碰撞检测"""
         # 从世界坐标系获取几何体数据
+        # 从世界坐标系获取几何体数据
         center = geometry.get_world_position()
         size = geometry.size
         
         # 获取旋转矩阵
         rotation_matrix = geometry.transform_matrix[:3, :3]
+        if geometry.parent:
+            parent_transform = geometry.parent.transform_matrix
+            # 提取父变换中的旋转部分
+            parent_rotation = parent_transform[:3, :3]
+            # 组合旋转
+            rotation_matrix = parent_rotation @ rotation_matrix                    # 更新中心位置
+            center = parent_transform @ np.append(geometry.position, 1)
+            center = center[:3]
         
         # 转换射线到环的局部坐标系
         local_start, local_direction = self.transform_ray_to_local(ray_origin, ray_direction, center, rotation_matrix)

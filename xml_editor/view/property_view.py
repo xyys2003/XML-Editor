@@ -287,15 +287,15 @@ class PropertyView(QWidget):
         geometry_group = QGroupBox("几何")
         geometry_layout = QFormLayout(geometry_group)
         
-        # 几何类型选择
+        # 将类型下拉框改为只读标签
+        self._geometry_type_label = QLabel()
+        geometry_layout.addRow("类型:", self._geometry_type_label)
+        
+        # 保留原来的下拉框但隐藏它，以便在需要时仍然可以获取类型数据
         self._geometry_type = QComboBox()
+        self._geometry_type.hide()
         for geo_type in GeometryType:
             self._geometry_type.addItem(geo_type.name, geo_type.value)
-        
-        # 修改连接方式，增加处理逻辑
-        self._geometry_type.currentIndexChanged.connect(self._on_geometry_type_changed)
-        
-        geometry_layout.addRow("类型:", self._geometry_type)
         
         # 名称
         self._name_edit = QLineEdit()
@@ -312,35 +312,6 @@ class PropertyView(QWidget):
         geometry_layout.addRow("", self._visibility)
         
         self._form_layout.addRow(geometry_group)
-    
-    def _on_geometry_type_changed(self):
-        """处理几何体类型变化"""
-        # 获取新的几何体类型
-        geo_type = self._geometry_type.currentData()
-        
-        # 发送类型变更信号
-        self.propertyChanged.emit("type", geo_type)
-        
-        # 更新尺寸控件
-        self._show_size_controls_for_type(geo_type)
-        
-        # 根据几何体类型设置默认尺寸
-        scale = None
-        
-        if geo_type == "sphere":
-            # 球体默认尺寸 - 统一半径
-            radius = self._scale_x.value()  # 使用当前X值作为半径
-            scale = [radius, radius, radius]
-            
-        elif geo_type in ["cylinder", "capsule"]:
-            # 圆柱体/胶囊体默认尺寸 - 统一XY作为半径
-            radius = self._scale_x.value()  # 使用当前X值作为半径
-            length = self._scale_z.value()  # 使用当前Z值作为长度
-            scale = [radius, radius, length]
-        
-        # 如果有默认尺寸，发送更新
-        if scale:
-            self.propertyChanged.emit("scale", scale)
     
     def _create_material_group(self):
         """创建材质属性组"""
@@ -486,10 +457,20 @@ class PropertyView(QWidget):
         # 更新几何类型
         geo_type = self._property_viewmodel.get_property("type")
         if geo_type is not None:
+            # 更新隐藏的下拉框（用于内部逻辑）
             self._geometry_type.blockSignals(True)
             index = self._geometry_type.findData(geo_type)
             self._geometry_type.setCurrentIndex(index if index >= 0 else 0)
             self._geometry_type.blockSignals(False)
+            
+            # 更新显示的标签
+            type_name = ""
+            for i in range(self._geometry_type.count()):
+                if self._geometry_type.itemData(i) == geo_type:
+                    type_name = self._geometry_type.itemText(i)
+                    break
+            
+            self._geometry_type_label.setText(type_name)
             
             # 根据几何体类型显示对应的尺寸控件
             self._show_size_controls_for_type(geo_type)

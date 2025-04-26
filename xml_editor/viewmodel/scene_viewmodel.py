@@ -377,16 +377,20 @@ class SceneViewModel(QObject):
     
     def notify_object_changed(self, obj):
         """
-        通知对象已更改
+        通知对象属性已更改
         
         参数:
             obj: 被修改的对象
         """
+        # 更新所有变换矩阵
+        self.update_all_transform_matrices()
+        
         # 发出对象变化信号
         self.objectChanged.emit(obj)
         
-        # 同时发出几何体列表变化信号，更新视图
-        self.geometriesChanged.emit()
+        # 如果对象在选择列表中，同时更新选择
+        if obj == self._selected_geo:
+            self.selectionChanged.emit(obj)
     
     def screen_to_world_ray(self, screen_x, screen_y, viewport_width, viewport_height):
         """
@@ -465,4 +469,258 @@ class SceneViewModel(QObject):
             return result.geometry
         
         # 没有击中任何几何体
-        return None 
+        return None
+    
+    def update_all_transform_matrices(self):
+        """
+        更新场景中所有几何体的变换矩阵
+        
+        从根节点开始递归更新层次结构中的所有变换矩阵
+        """
+        # 获取场景中的顶层节点
+        top_level_objects = self.get_all_geometries()
+        
+        # 递归更新所有节点的变换矩阵
+        for obj in top_level_objects:
+            self._update_object_transform_recursive(obj)
+    
+    def _update_object_transform_recursive(self, obj):
+        """
+        递归更新对象及其子对象的变换矩阵
+        
+        参数:
+            obj: 要更新的对象
+        """
+        # 确保对象有update_transform_matrix方法
+        if hasattr(obj, 'update_transform_matrix'):
+            obj.update_transform_matrix()
+        
+        # 如果对象有子对象，递归更新它们
+        if hasattr(obj, 'children'):
+            for child in obj.children:
+                self._update_object_transform_recursive(child)
+    
+    def add_geometry(self, geometry_type, name=None, position=None, size=None, rotation=None, parent=None):
+        """
+        添加几何体到场景
+        
+        参数:
+            geometry_type: 几何体类型
+            name: 几何体名称（可选）
+            position: 位置（可选）
+            size: 尺寸（可选）
+            rotation: 旋转角度（可选）
+            parent: 父对象（可选）
+            
+        返回:
+            新创建的几何体
+        """
+        # 创建几何体
+        geometry = self.create_geometry(geometry_type, name, position, size, rotation, parent)
+        
+        # 更新所有变换矩阵
+        self.update_all_transform_matrices()
+        
+        # 发出场景变化信号
+        self.geometriesChanged.emit()
+        
+        return geometry
+    
+    def move_geometry(self, geometry, new_position):
+        """
+        移动几何体到新位置
+        
+        参数:
+            geometry: 要移动的几何体
+            new_position: 新位置坐标
+        """
+        if geometry:
+            geometry.position = new_position
+            
+            # 更新所有变换矩阵
+            self.update_all_transform_matrices()
+            
+            # 通知对象已更改
+            self.notify_object_changed(geometry)
+    
+    def get_serializable_geometries(self):
+        """
+        获取可序列化的几何体数据，包括所有嵌套的子对象
+        
+        返回:
+            dict: 包含所有几何体数据的字典
+        """
+        geometries_data = []
+        
+        def serialize_geometry(geo, parent_id=None):
+            """递归序列化几何体及其子对象"""
+            # 创建当前几何体的数据对象
+            geo_id = id(geo)  # 使用对象ID作为唯一标识
+            geo_data = {
+                'id': geo_id,
+                'parent_id': parent_id,
+                'type': geo.type if isinstance(geo.type, str) else (geo.type.name if hasattr(geo.type, 'name') else str(geo.type)),
+                'position': geo.position.tolist(),  # 位置转为列表
+                'rotation': geo.rotation.tolist(),  # 旋转转为列表
+                'scale': geo.size.tolist(),  # 缩放转为列表
+                'name': geo.name if hasattr(geo, 'name') else f"Object_{id(geo)}",
+            }
+            
+            # 添加颜色属性
+            if hasattr(geo, 'material') and hasattr(geo.material, 'color'):
+                geo_data['color'] = geo.material.color.tolist()
+            else:
+                geo_data['color'] = [1.0, 1.0, 1.0, 1.0]
+            
+            # 添加特有属性（如果存在）
+            if hasattr(geo, 'get_specific_properties'):
+                geo_data['properties'] = geo.get_specific_properties()
+            else:
+                geo_data['properties'] = {}
+            
+            # 添加当前几何体数据
+            geometries_data.append(geo_data)
+            
+            # 递归处理子对象
+            if hasattr(geo, 'children'):
+                for child in geo.children:
+                    serialize_geometry(child, geo_id)
+        
+        # 处理所有顶层几何体
+        for geo in self._geometries:
+            serialize_geometry(geo)
+        
+        # 返回包含场景信息和几何体数据的字典
+        return {
+            'version': '1.0',
+            'geometries': geometries_data
+        }
+    
+    def load_geometries_from_data(self, data):
+        """
+        从数据加载几何体，包括层次结构
+        
+        参数:
+            data: 包含几何体数据的字典
+        
+        返回:
+            bool: 加载是否成功
+        """
+        try:
+            # 检查数据版本兼容性
+            if 'version' not in data:
+                print("无法识别的数据格式")
+                return False
+            
+            # 清除当前场景中的所有几何体
+            self.clear_scene()
+            
+            # 创建ID到几何体的映射，用于处理父子关系
+            id_to_geo = {}
+            
+            # 记录加载的几何体数量
+            loaded_count = 0
+            
+            # 首先创建所有几何体
+            for geo_data in data.get('geometries', []):
+                # 获取ID和父ID
+                geo_id = geo_data.get('id')
+                parent_id = geo_data.get('parent_id')
+                
+                # 从数据中获取几何体类型
+                geo_type_name = geo_data.get('type')
+                if not geo_type_name:
+                    continue
+                
+                # 从数据中获取属性
+                name = geo_data.get('name', None)
+                position = geo_data.get('position', [0, 0, 0])
+                rotation = geo_data.get('rotation', [0, 0, 0])
+                size = geo_data.get('scale', [1, 1, 1])
+                color = geo_data.get('color', [1, 1, 1, 1])
+                
+                print(f"正在加载: {name}, 类型: {geo_type_name}, ID: {geo_id}, 父ID: {parent_id}")
+                
+                # 查找父对象
+                parent_geo = id_to_geo.get(parent_id) if parent_id else None
+                
+                geo = None  # 初始化几何体变量
+                
+                # 检查是否是几何体组
+                if geo_type_name == 'group':
+                    try:
+                        # 创建几何体组
+                        geo = self.create_group(
+                            name=name,
+                            position=position,
+                            rotation=rotation,
+                            parent=parent_geo
+                        )
+                        loaded_count += 1
+                    except Exception as e:
+                        print(f"创建几何体组失败: {str(e)}")
+                        continue
+                else:
+                    # 处理普通几何体类型
+                    try:
+                        # 尝试直接匹配枚举或值
+                        found = False
+                        for gt in GeometryType:
+                            if (gt.name == geo_type_name or 
+                                gt.value == geo_type_name or 
+                                str(gt.name).lower() == str(geo_type_name).lower() or 
+                                str(gt.value).lower() == str(geo_type_name).lower()):
+                                found = True
+                                try:
+                                    # 创建几何体
+                                    geo = self.create_geometry(
+                                        geo_type=gt,
+                                        name=name,
+                                        position=position,
+                                        size=size,
+                                        rotation=rotation,
+                                        parent=parent_geo
+                                    )
+                                    
+                                    # 设置颜色
+                                    if hasattr(geo, 'material') and hasattr(geo.material, 'color'):
+                                        geo.material.color = color
+                                    
+                                    loaded_count += 1
+                                    break
+                                except Exception as e:
+                                    print(f"创建几何体失败: {str(e)}")
+                                    continue
+                        
+                        if not found:
+                            print(f"未找到匹配的几何体类型: {geo_type_name}")
+                    except Exception as e:
+                        print(f"处理几何体时出错: {str(e)}")
+                        continue
+                
+                # 如果成功创建了几何体，将其添加到ID映射中
+                if geo and geo_id:
+                    id_to_geo[geo_id] = geo
+            
+            # 更新所有变换矩阵
+            self.update_all_transform_matrices()
+            
+            # 更新射线投射器
+            self._update_raycaster()
+            
+            # 通知视图更新
+            self.geometriesChanged.emit()
+            
+            print(f"成功加载 {loaded_count} 个几何体")
+            
+            return loaded_count > 0
+        except Exception as e:
+            print(f"加载几何体数据失败: {str(e)}")
+            return False
+    
+    def clear_scene(self):
+        """
+        清除场景中的所有几何体
+        """
+        self._geometries = []
+        self.geometriesChanged.emit() 
