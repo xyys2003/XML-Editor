@@ -18,6 +18,9 @@ from ..viewmodel.scene_viewmodel import SceneViewModel
 from ..model.raycaster import GeometryRaycaster, RaycastResult
 from ..model.geometry import Geometry
 
+# 在文件顶部添加导入语句
+from scipy.spatial.transform import Rotation as R
+
 # 初始化GLUT
 try:
     glutInit()
@@ -376,7 +379,7 @@ class OpenGLView(QOpenGLWidget):
         if selected:
             if geometry.type == GeometryType.CAPSULE.value:
                 # 胶囊体的包围盒需要考虑半球部分
-                self._draw_wireframe_cube(geometry.size[0], geometry.size[0], geometry.size[1]*2 + geometry.size[0]*2, highlight=True)
+                self._draw_wireframe_cube(geometry.size[0], geometry.size[0], geometry.size[2]+ geometry.size[0], highlight=True)
             else:
                 self._draw_wireframe_cube(geometry.size[0], geometry.size[1], geometry.size[2], highlight=True)
         
@@ -832,6 +835,7 @@ class OpenGLView(QOpenGLWidget):
             operation_mode = self._scene_viewmodel.operation_mode
             
             if selected_geo:
+                
                 # 处理不同的操作模式
                 if operation_mode == OperationMode.TRANSLATE:
                     self._handle_translation_drag(selected_geo, dx, dy)
@@ -1255,6 +1259,8 @@ class OpenGLView(QOpenGLWidget):
         
         # 获取当前选中的对象
         selected_obj = self._scene_viewmodel.selected_geometry
+
+       
         if not selected_obj:
             return None
         
@@ -1336,57 +1342,80 @@ class OpenGLView(QOpenGLWidget):
         self._scene_viewmodel.notify_object_changed(geometry)
 
     def _handle_local_translation(self, geometry, drag_amount):
-        """处理局部坐标系中的平移"""
-        current_pos = geometry.position.copy()
+        """
+        处理局部坐标系中的平移 - 基于简化旋转逻辑
         
+        关键思路：
+        1. 基于对象自身的欧拉角创建局部旋转矩阵
+        2. 从旋转矩阵中提取局部坐标轴
+        3. 沿着局部坐标轴计算平移向量
+        4. 直接更新物体位置属性
+        """
+        # 获取对象自身的欧拉角
+        euler_angles = geometry.rotation
+        
+        # 创建对象自身的旋转矩阵
+        rot_matrix = R.from_euler('XYZ', euler_angles, degrees=True).as_matrix()
+        
+        # 确定局部坐标系中的平移轴
         if self._controller_axis == 'x':
-            # 局部X轴平移
-            local_x = geometry.transform_matrix[:3, 0]
-            local_x_normalized = local_x / np.linalg.norm(local_x)
-            current_pos += local_x_normalized * drag_amount
+            local_axis = rot_matrix[:, 0]  # 局部X轴
         elif self._controller_axis == 'y':
-            # 局部Y轴平移
-            local_y = geometry.transform_matrix[:3, 1]
-            local_y_normalized = local_y / np.linalg.norm(local_y)
-            current_pos += local_y_normalized * drag_amount
+            local_axis = rot_matrix[:, 1]  # 局部Y轴
         elif self._controller_axis == 'z':
-            # 局部Z轴平移
-            local_z = geometry.transform_matrix[:3, 2]
-            local_z_normalized = local_z / np.linalg.norm(local_z)
-            current_pos += local_z_normalized * drag_amount
+            local_axis = rot_matrix[:, 2]  # 局部Z轴
+        else:
+            return
+            
+        # 计算平移向量（沿局部轴方向）
+        translation_vector = local_axis * drag_amount
         
-        # 更新几何体局部位置
-        geometry.position = current_pos
+        # 直接将平移向量添加到当前位置
+        new_position = [
+            geometry.position[0] + translation_vector[0],
+            geometry.position[1] + translation_vector[1],
+            geometry.position[2] + translation_vector[2]
+        ]
+        
+        # 更新几何体位置
+        geometry.position = new_position
 
     def _handle_global_translation(self, geometry, drag_amount):
-        """处理全局坐标系中的平移"""
-        # 获取对象当前的全局变换矩阵
-        world_matrix = self._get_world_matrix(geometry)
+        """
+        处理全局坐标系中的平移
         
-        # 应用全局平移
-        translation = np.zeros(3)
+        关键思路：
+        1. 获取物体世界矩阵和父对象世界矩阵
+        2. 确定全局坐标轴
+        3. 将全局平移转换到局部坐标系
+        4. 更新物体局部位置
+        """
+        
+        # 创建对象自身的旋转矩阵
+        rot_matrix = self._get_world_matrix(geometry)
+        
+        # 确定局部坐标系中的平移轴
         if self._controller_axis == 'x':
-            translation[0] = drag_amount
+            local_axis = rot_matrix[:, 0]  # 局部X轴
         elif self._controller_axis == 'y':
-            translation[1] = drag_amount
+            local_axis = rot_matrix[:, 1]  # 局部Y轴
         elif self._controller_axis == 'z':
-            translation[2] = drag_amount
+            local_axis = rot_matrix[:, 2]  # 局部Z轴
+        else:
+            return
+            
+        # 计算平移向量（沿局部轴方向）
+        translation_vector = local_axis * drag_amount
         
-        # 创建全局平移矩阵
-        translation_matrix = np.eye(4)
-        translation_matrix[:3, 3] = translation
+        # 直接将平移向量添加到当前位置
+        new_position = [
+            geometry.position[0] + translation_vector[0],
+            geometry.position[1] + translation_vector[1],
+            geometry.position[2] + translation_vector[2]
+        ]
         
-        # 应用全局平移到对象的世界矩阵
-        new_world_matrix = translation_matrix @ world_matrix
-        
-        # 计算新的局部变换（考虑父对象的变换）
-        new_local_matrix = self._world_to_local_matrix(new_world_matrix, geometry)
-        
-        # 从局部矩阵中提取新的位置（只更新位置，保持旋转和缩放不变）
-        position, _, _ = self._decompose_matrix(new_local_matrix)
-        
-        # 更新几何体属性
-        geometry.position = position
+        # 更新几何体位置
+        geometry.position = new_position
 
     def _handle_rotation_drag(self, geometry, dx, dy):
         """处理旋转拖动"""
@@ -1407,66 +1436,133 @@ class OpenGLView(QOpenGLWidget):
         self._scene_viewmodel.notify_object_changed(geometry)
 
     def _handle_local_rotation(self, geometry, drag_amount):
-        """处理局部坐标系中的旋转 - 直接修改欧拉角"""
-        current_rotation = geometry.rotation.copy()
+        """
+        处理局部坐标系中的旋转 - 正确处理存在父类的情况
         
+        关键思路：
+        1. 获取对象当前的全局位置作为旋转中心
+        2. 基于对象自身的欧拉角创建局部旋转矩阵，不考虑父类旋转
+        3. 确定在局部坐标系中的旋转轴
+        4. 创建仅应用于对象自身的旋转增量矩阵
+        5. 应用旋转并更新欧拉角
+        """
+        # 获取对象当前的全局位置作为旋转中心
+        
+        # 获取对象自身的欧拉角，不考虑父类旋转
+        euler_angles = geometry.rotation
+        
+        # 创建对象自身的旋转矩阵
+        rot_matrix = R.from_euler('XYZ', euler_angles, degrees=True).as_matrix()
+        
+        # 确定局部坐标系中的旋转轴
         if self._controller_axis == 'x':
-            current_rotation[0] += drag_amount
-            current_rotation[0] = current_rotation[0] % 360
+            local_axis = rot_matrix[:, 0]  # 局部X轴
         elif self._controller_axis == 'y':
-            current_rotation[1] += drag_amount
-            current_rotation[1] = current_rotation[1] % 360
+            local_axis = rot_matrix[:, 1]  # 局部Y轴
         elif self._controller_axis == 'z':
-            current_rotation[2] += drag_amount
-            current_rotation[2] = current_rotation[2] % 360
-        
-        # 更新几何体旋转
-        geometry.rotation = current_rotation
-
-    def _handle_global_rotation(self, geometry, drag_amount):
-        """处理全局坐标系中的旋转"""
-        # 获取对象当前的全局变换矩阵
-        world_matrix = self._get_world_matrix(geometry)
-        
-        # 提取对象在全局坐标系中的位置（旋转中心）
-        world_position = world_matrix[:3, 3]
-        
-        # 创建全局旋转矩阵（绕各轴的旋转矩阵）
-        angle_rad = np.radians(drag_amount)
-        
-        # 创建旋转矩阵
-        if self._controller_axis == 'x':
-            # 绕全局X轴旋转
-            rotation_matrix = self._create_rotation_matrix_x(angle_rad)
-        elif self._controller_axis == 'y':
-            # 绕全局Y轴旋转
-            rotation_matrix = self._create_rotation_matrix_y(angle_rad)
-        elif self._controller_axis == 'z':
-            # 绕全局Z轴旋转
-            rotation_matrix = self._create_rotation_matrix_z(angle_rad)
+            local_axis = rot_matrix[:, 2]  # 局部Z轴
         else:
             return
+            
+        # 计算旋转变化（弧度）
+        angle_rad = np.radians(drag_amount)
         
-        # 创建平移到旋转中心的矩阵
-        translate_to_origin = np.eye(4)
-        translate_to_origin[:3, 3] = -world_position
+        # 创建增量旋转（基于局部坐标轴）
+        delta_rotation = R.from_rotvec(local_axis * angle_rad)
         
-        # 创建从旋转中心平移回的矩阵
-        translate_back = np.eye(4)
-        translate_back[:3, 3] = world_position
+        # 获取当前旋转
+        current_rotation = R.from_euler('XYZ', euler_angles, degrees=True)
         
-        # 计算新的全局变换矩阵: 先移到旋转中心，应用旋转，再移回原位置
-        new_world_matrix = translate_back @ rotation_matrix @ translate_to_origin @ world_matrix
+        # 将增量旋转应用到当前旋转 (delta_rotation * current_rotation)
+        # 注意：先应用当前旋转，再应用增量旋转
+        new_rotation = delta_rotation * current_rotation
         
-        # 计算新的局部变换（考虑父对象的变换）
-        new_local_matrix = self._world_to_local_matrix(new_world_matrix, geometry)
+        # 将新旋转转换为欧拉角（度数）
+        new_euler_angles = new_rotation.as_euler('XYZ', degrees=True)
         
-        # 从局部矩阵中提取新的位置和旋转（只更新这两个，保持缩放不变）
-        position, rotation, _ = self._decompose_matrix(new_local_matrix)
+        # 更新几何体的旋转属性
+        geometry.rotation = new_euler_angles.tolist()
+
+    def _handle_global_rotation(self, geometry, drag_amount):
+        """
+        处理全局坐标系中的旋转
         
-        # 更新几何体属性
-        geometry.position = position
-        geometry.rotation = rotation
+        关键思路：
+        1. 将全局坐标轴转换到局部坐标系
+        2. 在局部坐标系中应用旋转
+        3. 更新几何体的欧拉角旋转属性
+        """
+        # 确定全局坐标系中的旋转轴
+        euler_angles = geometry.rotation
+        
+        if geometry.parent is not None:
+            rot_matrix = self._get_world_matrix(geometry.parent)[:3,:3]
+        else:
+            rot_matrix = np.eye(3)
+
+        # 确定局部坐标系中的旋转轴
+        if self._controller_axis == 'x':
+            local_axis = rot_matrix[:, 0]  # 局部X轴
+        elif self._controller_axis == 'y':
+            local_axis = rot_matrix[:, 1]  # 局部Y轴
+        elif self._controller_axis == 'z':
+            local_axis = rot_matrix[:, 2]  # 局部Z轴
+        else:
+            return
+            
+        # 计算旋转变化（弧度）
+        angle_rad = np.radians(drag_amount)
+        
+        # 创建增量旋转（基于局部坐标轴）
+        delta_rotation = R.from_rotvec(local_axis * angle_rad)
+        
+        # 获取当前旋转
+        current_rotation = R.from_euler('XYZ', euler_angles, degrees=True)
+        
+        # 将增量旋转应用到当前旋转 (delta_rotation * current_rotation)
+        # 注意：先应用当前旋转，再应用增量旋转
+        new_rotation = delta_rotation * current_rotation
+        
+        # 将新旋转转换为欧拉角（度数）
+        new_euler_angles = new_rotation.as_euler('XYZ', degrees=True)
+
+        world_matrix = self._get_world_matrix(geometry)
+        world_position = world_matrix[:3, 3]
+        if self._controller_axis == 'x':
+            axis_index = 0
+            global_axis_dir = np.array([1, 0, 0])
+        elif self._controller_axis == 'y':
+            axis_index = 1
+            global_axis_dir = np.array([0, 1, 0])
+        elif self._controller_axis == 'z':
+            axis_index = 2
+            global_axis_dir = np.array([0, 0, 1])
+        else:
+            return    
+        # 确定旋转轴在空间中的位置 - 通过物体位置的全局轴
+        # 创建一个点，该点位于全局轴上并且与物体世界位置在其他两个轴上的坐标相同
+        
+        # 以下是旋转中心的关键修改
+        # 旋转轴是通过物体位置的对应全局轴
+        # 例如：如果是X轴，旋转轴是通过点(world_position[0], 0, 0)的线
+        # 我们需要计算物体到这条轴的垂直向量
+        
+        # 计算物体到旋转轴的垂直距离向量
+        perpendicular_vector = np.copy(world_position)
+        perpendicular_vector[axis_index] = 0  # 将轴方向上的分量置为0，得到垂直于轴的向量
+        global_rotation = R.from_rotvec(global_axis_dir * angle_rad)
+      
+        # 应用旋转到这个垂直向量
+        rotated_perpendicular = global_rotation.apply(perpendicular_vector)
+        
+        # 计算新的世界位置（保持在轴方向上的坐标不变）
+        new_world_position = np.copy(rotated_perpendicular)
+        new_world_position[axis_index] = world_position[axis_index]  # 保持在旋转轴方向上的坐标不变
+
+        
+        # 更新几何体的旋转属性
+        geometry.rotation = new_euler_angles.tolist()
+        geometry.position = new_world_position.tolist()
 
     def _handle_scale_drag(self, geometry, dx, dy):
         """处理缩放拖动"""
@@ -1487,61 +1583,32 @@ class OpenGLView(QOpenGLWidget):
         self._scene_viewmodel.notify_object_changed(geometry)
 
     def _handle_local_scale(self, geometry, scale_factor):
-        """处理局部坐标系中的缩放"""
-        current_scale = geometry.size.copy()
+        """
+        处理局部坐标系下的缩放
         
-        if self._controller_axis == 'x':
-            current_scale[0] *= scale_factor
-        elif self._controller_axis == 'y':
-            current_scale[1] *= scale_factor
-        elif self._controller_axis == 'z':
-            current_scale[2] *= scale_factor
-        
-        # 确保大小不为负值
-        current_scale = np.maximum(current_scale, np.array([0.01, 0.01, 0.01]))
-        
-        # 更新几何体尺寸
-        geometry.size = current_scale
+        Args:
+            geometry: 几何体
+            scale_factor: 缩放因子
+        """
+        # 直接修改几何体的大小，不涉及矩阵变换
+        geometry.size = [
+            geometry.size[0] * scale_factor,
+            geometry.size[1] * scale_factor,
+            geometry.size[2] * scale_factor
+        ]
+        # 修改此行：使用正确的方法名称
+        self._scene_viewmodel.notify_object_changed(geometry)
 
     def _handle_global_scale(self, geometry, scale_factor):
-        """处理全局坐标系中的缩放"""
-        # 获取对象当前的全局变换矩阵
-        world_matrix = self._get_world_matrix(geometry)
+        """
+        处理全局坐标系下的缩放
         
-        # 提取对象在全局坐标系中的位置（缩放中心）
-        world_position = world_matrix[:3, 3]
-        
-        # 创建全局缩放矩阵
-        scale_matrix = np.eye(4)
-        
-        if self._controller_axis == 'x':
-            scale_matrix[0, 0] = scale_factor
-        elif self._controller_axis == 'y':
-            scale_matrix[1, 1] = scale_factor
-        elif self._controller_axis == 'z':
-            scale_matrix[2, 2] = scale_factor
-        
-        # 创建平移到缩放中心的矩阵
-        translate_to_origin = np.eye(4)
-        translate_to_origin[:3, 3] = -world_position
-        
-        # 创建从缩放中心平移回的矩阵
-        translate_back = np.eye(4)
-        translate_back[:3, 3] = world_position
-        
-        # 计算新的全局变换矩阵: 先移到缩放中心，应用缩放，再移回原位置
-        new_world_matrix = translate_back @ scale_matrix @ translate_to_origin @ world_matrix
-        
-        # 计算新的局部变换（考虑父对象的变换）
-        new_local_matrix = self._world_to_local_matrix(new_world_matrix, geometry)
-        
-        # 从局部矩阵中提取新的位置、旋转和缩放
-        position, rotation, scale = self._decompose_matrix(new_local_matrix)
-        
-        # 更新几何体属性
-        geometry.position = position
-        geometry.rotation = rotation
-        geometry.size = scale
+        Args:
+            geometry: 几何体
+            scale_factor: 缩放因子
+        """
+        # 局部和全局缩放逻辑相同，直接调用局部缩放函数
+        self._handle_local_scale(geometry, scale_factor)
 
     def _calculate_drag_amount(self, dx, dy, sensitivity):
         """
@@ -1616,9 +1683,19 @@ class OpenGLView(QOpenGLWidget):
             matrix = geometry.transform_matrix.T.flatten().tolist()
             glMultMatrixf(matrix)
         else:
-            # 使用全局坐标系 - 只移动到物体位置，不旋转
-            world_position = self._get_world_matrix(geometry)[:3, 3]
-            glTranslatef(*world_position)
+            # 使用全局坐标系 - 只使用物体的位置，将旋转设为单位矩阵
+            # 获取物体的变换矩阵
+            transform_matrix = geometry.transform_matrix.copy()
+            
+            # 创建单位旋转矩阵
+            rot_matrix = np.eye(3)
+            
+            # 替换变换矩阵中的旋转部分(前3x3)，保留平移部分
+            transform_matrix[:3, :3] = rot_matrix
+            
+            # 将修改后的矩阵转置并展平为OpenGL所需的列优先格式
+            matrix = transform_matrix.T.flatten().tolist()
+            glMultMatrixf(matrix)
         
         # 设置混合模式，使控制器在几何体上方清晰可见
         glEnable(GL_BLEND)
