@@ -199,6 +199,19 @@ class PropertyViewModel(QObject):
         
         # 通知场景视图模型对象已更改
         self._scene_model.notify_object_changed(self._selected_object)
+        
+        # 属性更新后，如果是名称变更，通过场景视图模型触发层级树刷新
+        if property_name == "name":
+            # 触发场景模型的几何体变化和删除信号
+            self._scene_model.geometriesChanged.emit()
+            # 注意：通常geometryDeleted信号用于通知几何体被删除，这里使用可能不合适
+            # 而且当修改名称时，几何体并没有被删除
+            # self._scene_model.geometryDeleted.emit(self._selected_object)
+            
+            # 如果有层级视图模型引用，触发其层级变化信号
+            if hasattr(self._scene_model, 'hierarchyViewModel') and self._scene_model.hierarchyViewModel:
+                self._scene_model.hierarchyViewModel.hierarchyChanged.emit()
+        
         return True
     
     def reset_properties(self):

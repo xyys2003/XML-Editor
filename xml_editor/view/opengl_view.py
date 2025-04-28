@@ -310,6 +310,7 @@ class OpenGLView(QOpenGLWidget):
         # 应用几何体的变换
         if hasattr(geometry, 'transform_matrix'):
             # 将NumPy矩阵转换为OpenGL兼容的格式
+            geometry.update_transform_matrix()
             geom_transform = geometry.transform_matrix.T.flatten().tolist()
             glMultMatrixf(geom_transform)
         
@@ -877,7 +878,7 @@ class OpenGLView(QOpenGLWidget):
             # 处理摄像机旋转（左键拖动）
             if event.buttons() & Qt.LeftButton:
                 # 在Z轴向上的坐标系中，偏航角旋转仍然是绕Z轴
-                self._camera_rotation_y += dx * 0.5
+                self._camera_rotation_y -= dx * 0.5
                 
                 # 在Z轴向上的坐标系中，俯仰角是绕水平轴旋转
                 # 限制俯仰角范围，防止万向锁
@@ -907,7 +908,7 @@ class OpenGLView(QOpenGLWidget):
                 self._camera_target -= right_vector * dx * 0.01 * self._camera_distance
                 # 根据是否正在向上/向下看，调整垂直平移方向
                 vertical_dir = world_up if self._camera_rotation_x > 0 else -world_up
-                self._camera_target += world_up * dy * 0.01 * self._camera_distance
+                self._camera_target -= world_up * dy * 0.01 * self._camera_distance
                 
                 self.update()
         
@@ -1402,8 +1403,8 @@ class OpenGLView(QOpenGLWidget):
         
         # 直接将平移向量添加到当前位置
         new_position = [
-            geometry.position[0] + translation_vector[0],
-            geometry.position[1] + translation_vector[1],
+            geometry.position[0] - translation_vector[0],
+            geometry.position[1] - translation_vector[1],
             geometry.position[2] + translation_vector[2]
         ]
         
@@ -1466,15 +1467,15 @@ class OpenGLView(QOpenGLWidget):
             print(translation_vector[0],translation_vector[1],translation_vector[2])
             # 计算新的局部位置
             new_position = [
-                current_geometry_pos[0] + local_translation[0],
-                current_geometry_pos[1] + local_translation[1],
+                current_geometry_pos[0] - local_translation[0],
+                current_geometry_pos[1] - local_translation[1],
                 current_geometry_pos[2] + local_translation[2]
             ]
         else:
             # 如果没有父对象，直接使用全局平移向量
             new_position = [
-                current_geometry_pos[0] + translation_vector[0],
-                current_geometry_pos[1] + translation_vector[1],
+                current_geometry_pos[0] - translation_vector[0],
+                current_geometry_pos[1] - translation_vector[1],
                 current_geometry_pos[2] + translation_vector[2]
             ]
         

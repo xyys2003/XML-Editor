@@ -48,6 +48,7 @@ class SceneViewModel(QObject):
             'projection_matrix': np.eye(4)
         }
         self._use_local_coords = True
+        self.hierarchyViewModel = None  # 添加 hierarchyViewModel 属性
     
     @property
     def geometries(self):
@@ -762,4 +763,20 @@ class SceneViewModel(QObject):
     def notify_object_changed(self, geometry):
         """通知几何体对象变化"""
         self.objectChanged.emit(geometry)
-        self.geometryChanged.emit(geometry) 
+        self.geometryChanged.emit(geometry)
+    
+    def set_hierarchy_viewmodel(self, hierarchy_viewmodel):
+        """设置层级视图模型的引用"""
+        self.hierarchyViewModel = hierarchy_viewmodel
+
+    def refresh_hierarchy_tree(self):
+        """请求刷新层级树"""
+        if hasattr(self, 'hierarchyViewModel') and self.hierarchyViewModel:
+            # 只发出信号，让信号的接收者决定如何刷新
+            self.geometriesChanged.emit()
+
+            self.hierarchyViewModel.hierarchyChanged.emit()
+
+    # 然后在初始化代码中连接它们
+    # hierarchy_viewmodel = HierarchyViewModel(scene_viewmodel)
+    # scene_viewmodel.set_hierarchy_viewmodel(hierarchy_viewmodel) 
