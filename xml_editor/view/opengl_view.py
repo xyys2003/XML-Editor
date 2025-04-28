@@ -691,7 +691,7 @@ class OpenGLView(QOpenGLWidget):
                   0.5)  # 半透明
         
         # 使用固定大小而不是基于尺寸参数
-        glScalef(5.0, 0.01, 5.0)  # 极大且极薄的平面
+        glScalef(100.0, 100, 0.01)  # 极大且极薄的平面
         glutSolidCube(2.0)
         
         glPopMatrix()
