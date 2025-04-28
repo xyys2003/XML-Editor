@@ -1648,11 +1648,22 @@ class OpenGLView(QOpenGLWidget):
             geometry: 几何体
             scale_factor: 缩放因子
         """
+        if scale_factor == 0:
+            return
+        
+        if self._controller_axis == 'x':
+            scale_matrix = [scale_factor, 1, 1]
+        elif self._controller_axis == 'y':
+            scale_matrix = [1, scale_factor, 1]
+        elif self._controller_axis == 'z':
+            scale_matrix = [1, 1, scale_factor]
+        else:
+            return
         # 直接修改几何体的大小，不涉及矩阵变换
         geometry.size = [
-            geometry.size[0] * scale_factor,
-            geometry.size[1] * scale_factor,
-            geometry.size[2] * scale_factor
+            geometry.size[0] / scale_matrix[0],
+            geometry.size[1] / scale_matrix[1],
+            geometry.size[2] * scale_matrix[2]
         ]
         # 修改此行：使用正确的方法名称
         self._scene_viewmodel.notify_object_changed(geometry)
