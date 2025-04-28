@@ -15,6 +15,9 @@ class PropertyViewModel(QObject):
     # 信号：属性变化时触发，视图将更新显示
     propertiesChanged = pyqtSignal()
     
+    # 添加新的信号
+    propertyChanged = pyqtSignal(object, str, object)  # 属性变化信号（对象、属性名、新值）
+    
     def __init__(self, scene_model:SceneViewModel):
         """
         初始化属性视图模型
@@ -191,7 +194,10 @@ class PropertyViewModel(QObject):
         else:
             return False
         
-        # 通知场景模型对象已更改，这会触发所有变换矩阵的更新
+        # 发射属性变化信号
+        self.propertyChanged.emit(self._selected_object, property_name, value)
+        
+        # 通知场景视图模型对象已更改
         self._scene_model.notify_object_changed(self._selected_object)
         return True
     

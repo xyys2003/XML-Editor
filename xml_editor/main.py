@@ -126,18 +126,22 @@ class MainWindow(QMainWindow):
         # 编辑菜单
         edit_menu = self.menuBar().addMenu("编辑(&E)")
         
-        # 撤销/重做（这些功能需要在后续实现）
-        undo_action = QAction("撤销(&U)", self)
-        undo_action.setShortcut(QKeySequence.Undo)
-        # undo_action.triggered.connect(self._undo)
-        edit_menu.addAction(undo_action)
-        undo_action.setEnabled(False)  # 暂时禁用
+        # 撤销/重做
+        self.undo_action = QAction("撤销(&U)", self)
+        self.undo_action.setShortcut(QKeySequence.Undo)
+        self.undo_action.triggered.connect(self._undo)
+        edit_menu.addAction(self.undo_action)
+        self.undo_action.setEnabled(False)  # 初始状态禁用
         
-        redo_action = QAction("重做(&R)", self)
-        redo_action.setShortcut(QKeySequence.Redo)
-        # redo_action.triggered.connect(self._redo)
-        edit_menu.addAction(redo_action)
-        redo_action.setEnabled(False)  # 暂时禁用
+        self.redo_action = QAction("重做(&R)", self)
+        self.redo_action.setShortcut(QKeySequence.Redo)
+        self.redo_action.triggered.connect(self._redo)
+        edit_menu.addAction(self.redo_action)
+        self.redo_action.setEnabled(False)  # 初始状态禁用
+        
+        # 连接撤销/重做状态变化信号
+        self.control_viewmodel.undoStateChanged.connect(self._update_undo_state)
+        self.control_viewmodel.redoStateChanged.connect(self._update_redo_state)
         
         # 分隔线
         edit_menu.addSeparator()
@@ -282,17 +286,27 @@ class MainWindow(QMainWindow):
         # 重置并确保属性面板可见
         self.property_viewmodel.reset_properties()
         
-        # 检查属性面板是否存在并可见，如果不可见则重新创建
+        # 需要检查的面板及其重建方法
+        dock_panels = {
+            "属性": self._recreate_property_panel,
+            "控制面板": self._recreate_control_panel,
+            "层级结构": self._recreate_hierarchy_panel,
+        }
+        # 记录哪些面板已找到
+        found_panels = {key: False for key in dock_panels}
+        
         for dock in self.findChildren(QDockWidget):
-            if dock.windowTitle() == "属性":
+            title = dock.windowTitle()
+            if title in dock_panels:
+                found_panels[title] = True
                 if not dock.isVisible():
-                    # 如果属性面板被关闭，重新显示它
                     dock.setVisible(True)
                     dock.raise_()
-                break
-        else:
-            # 如果没有找到属性面板，重新创建
-            self._recreate_property_panel()
+        
+        # 没有找到的面板，重新创建
+        for panel, recreate_func in dock_panels.items():
+            if not found_panels[panel]:
+                recreate_func()
         
         # 通知状态栏
         self.statusBar().showMessage("已重置所有视图")
@@ -304,6 +318,46 @@ class MainWindow(QMainWindow):
         property_dock.setWidget(self.property_panel)
         property_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.addDockWidget(Qt.RightDockWidgetArea, property_dock)
+    
+    def _recreate_control_panel(self):
+        """重新创建控制面板"""
+        control_dock = QDockWidget("控制面板", self)
+        control_dock.setWidget(self.control_panel)
+        control_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.addDockWidget(Qt.LeftDockWidgetArea, control_dock)
+    
+    def _recreate_hierarchy_panel(self):
+        """重新创建层级结构面板"""
+        hierarchy_dock = QDockWidget("层级结构", self)
+        hierarchy_dock.setWidget(self.hierarchy_tree)
+        hierarchy_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.addDockWidget(Qt.LeftDockWidgetArea, hierarchy_dock)
+    
+    def _undo(self):
+        """执行撤销操作"""
+        if self.control_viewmodel.can_undo():
+            success = self.control_viewmodel.undo()
+            if success:
+                self.statusBar().showMessage("已撤销操作")
+            else:
+                self.statusBar().showMessage("撤销操作失败")
+
+    def _redo(self):
+        """执行重做操作"""
+        if self.control_viewmodel.can_redo():
+            success = self.control_viewmodel.redo()
+            if success:
+                self.statusBar().showMessage("已重做操作")
+            else:
+                self.statusBar().showMessage("重做操作失败")
+
+    def _update_undo_state(self, can_undo):
+        """更新撤销按钮状态"""
+        self.undo_action.setEnabled(can_undo)
+
+    def _update_redo_state(self, can_redo):
+        """更新重做按钮状态"""
+        self.redo_action.setEnabled(can_redo)
     
     def closeEvent(self, event):
         """窗口关闭事件"""

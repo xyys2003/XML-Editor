@@ -87,7 +87,7 @@ class OpenGLView(QOpenGLWidget):
         self._drag_start_value = None
         
         # 坐标系选择 (True: 局部坐标系, False: 全局坐标系)
-        self._use_local_coords = False
+        self._use_local_coords = True
 
         # 射线投射器
         self._controllor_raycaster = None
@@ -806,6 +806,32 @@ class OpenGLView(QOpenGLWidget):
     
     def mouseReleaseEvent(self, event):
         """处理鼠标释放事件"""
+        # 如果是在拖动控制器，则保存状态
+        if self._is_mouse_pressed and self._dragging_controller:
+            # 检查是否有选中的几何体和拖动开始值
+            selected_geo = self._scene_viewmodel.selected_geometry
+            if selected_geo and self._drag_start_value is not None:
+                # 如果位置、旋转或缩放发生了变化，通知场景视图模型
+                if self._scene_viewmodel.operation_mode == OperationMode.TRANSLATE:
+                    # 通知位置变化
+                    if hasattr(self._scene_viewmodel, 'notifyPositionChanged'):
+                        self._scene_viewmodel.notifyPositionChanged(selected_geo)
+                elif self._scene_viewmodel.operation_mode == OperationMode.ROTATE:
+                    # 通知旋转变化
+                    if hasattr(self._scene_viewmodel, 'notifyRotationChanged'):
+                        self._scene_viewmodel.notifyRotationChanged(selected_geo)
+                elif self._scene_viewmodel.operation_mode == OperationMode.SCALE:
+                    # 通知缩放变化
+                    if hasattr(self._scene_viewmodel, 'notifyScaleChanged'):
+                        self._scene_viewmodel.notifyScaleChanged(selected_geo)
+                
+                # 通知对象发生变化
+                self._scene_viewmodel.notify_object_changed(selected_geo)
+                
+                # 在拖动完成后触发状态记录（仅当有实际变化时）
+                if hasattr(self._scene_viewmodel, 'control_viewmodel'):
+                    self._scene_viewmodel.control_viewmodel._on_geometry_modified()
+        
         self._is_mouse_pressed = False
         
         # 重置变换控制器状态
@@ -1340,6 +1366,10 @@ class OpenGLView(QOpenGLWidget):
         
         # 通知视图模型对象已更改
         self._scene_viewmodel.notify_object_changed(geometry)
+        
+        # 在拖动完成后触发状态记录
+        if hasattr(self._scene_viewmodel, 'control_viewmodel'):
+            self._scene_viewmodel.control_viewmodel._on_geometry_modified()
 
     def _handle_local_translation(self, geometry, drag_amount):
         """
@@ -1391,30 +1421,64 @@ class OpenGLView(QOpenGLWidget):
         4. 更新物体局部位置
         """
         
-        # 创建对象自身的旋转矩阵
-        rot_matrix = self._get_world_matrix(geometry)
-        
-        # 确定局部坐标系中的平移轴
+        # 确定全局坐标系中的平移轴
         if self._controller_axis == 'x':
-            local_axis = rot_matrix[:, 0]  # 局部X轴
+            global_axis = np.array([1, 0, 0])  # 全局X轴
         elif self._controller_axis == 'y':
-            local_axis = rot_matrix[:, 1]  # 局部Y轴
+            global_axis = np.array([0, 1, 0])  # 全局Y轴
         elif self._controller_axis == 'z':
-            local_axis = rot_matrix[:, 2]  # 局部Z轴
+            global_axis = np.array([0, 0, 1])  # 全局Z轴
         else:
             return
             
-        # 计算平移向量（沿局部轴方向）
-        translation_vector = local_axis * drag_amount
+        # 计算平移向量（沿全局轴方向）
+        translation_vector = global_axis * drag_amount
         
-        # 直接将平移向量添加到当前位置
-        new_position = [
-            geometry.position[0] + translation_vector[0],
-            geometry.position[1] + translation_vector[1],
-            geometry.position[2] + translation_vector[2]
-        ]
+        # 获取当前的世界矩阵
+        world_matrix = self._get_world_matrix(geometry)
         
-        # 更新几何体位置
+        # 从世界矩阵中提取当前世界位置
+        current_geometry_pos= geometry.position
+
+
+
+        # 计算局部坐标系下的新位置
+        if geometry.parent is not None:
+            # 获取父对象的世界矩阵
+            parent_world_matrix = self._get_world_matrix(geometry.parent)
+            
+            # 获取父对象的旋转矩阵（3x3部分）
+            parent_rotation = parent_world_matrix[:3, :3]
+            
+            # 将全局平移向量投影到父类旋转矩阵的三个轴上
+            x_axis = parent_rotation[:, 0]  # 父类旋转后的X轴
+            y_axis = parent_rotation[:, 1]  # 父类旋转后的Y轴
+            z_axis = parent_rotation[:, 2]  # 父类旋转后的Z轴
+            print(x_axis,y_axis,z_axis)
+            # 计算投影分量（点积）
+            x_component = np.dot(translation_vector, x_axis)
+            y_component = np.dot(translation_vector, y_axis)
+            z_component = np.dot(translation_vector, z_axis)
+            
+            # 使用投影分量作为新的局部平移向量
+            local_translation = [x_component, y_component, z_component]
+            print("local",x_component,y_component,z_component)
+            print(translation_vector[0],translation_vector[1],translation_vector[2])
+            # 计算新的局部位置
+            new_position = [
+                current_geometry_pos[0] + local_translation[0],
+                current_geometry_pos[1] + local_translation[1],
+                current_geometry_pos[2] + local_translation[2]
+            ]
+        else:
+            # 如果没有父对象，直接使用全局平移向量
+            new_position = [
+                current_geometry_pos[0] + translation_vector[0],
+                current_geometry_pos[1] + translation_vector[1],
+                current_geometry_pos[2] + translation_vector[2]
+            ]
+        
+        # 更新几何体位置 - 使用计算出的正确局部坐标位置
         geometry.position = new_position
 
     def _handle_rotation_drag(self, geometry, dx, dy):
@@ -1434,6 +1498,10 @@ class OpenGLView(QOpenGLWidget):
         
         # 通知视图模型对象已更改
         self._scene_viewmodel.notify_object_changed(geometry)
+        
+        # 在拖动完成后触发状态记录
+        if hasattr(self._scene_viewmodel, 'control_viewmodel'):
+            self._scene_viewmodel.control_viewmodel._on_geometry_modified()
 
     def _handle_local_rotation(self, geometry, drag_amount):
         """
@@ -1488,81 +1556,61 @@ class OpenGLView(QOpenGLWidget):
         处理全局坐标系中的旋转
         
         关键思路：
-        1. 将全局坐标轴转换到局部坐标系
-        2. 在局部坐标系中应用旋转
-        3. 更新几何体的欧拉角旋转属性
+        1. 在全局坐标系中计算旋转
+        2. 计算旋转后的位置和方向
+        3. 将结果转换回局部坐标系
         """
-        # 确定全局坐标系中的旋转轴
-        euler_angles = geometry.rotation
-        
-        if geometry.parent is not None:
-            rot_matrix = self._get_world_matrix(geometry.parent)[:3,:3]
-        else:
-            rot_matrix = np.eye(3)
-
-        # 确定局部坐标系中的旋转轴
-        if self._controller_axis == 'x':
-            local_axis = rot_matrix[:, 0]  # 局部X轴
-        elif self._controller_axis == 'y':
-            local_axis = rot_matrix[:, 1]  # 局部Y轴
-        elif self._controller_axis == 'z':
-            local_axis = rot_matrix[:, 2]  # 局部Z轴
-        else:
-            return
-            
         # 计算旋转变化（弧度）
         angle_rad = np.radians(drag_amount)
         
-        # 创建增量旋转（基于局部坐标轴）
-        delta_rotation = R.from_rotvec(local_axis * angle_rad)
-        
-        # 获取当前旋转
-        current_rotation = R.from_euler('XYZ', euler_angles, degrees=True)
-        
-        # 将增量旋转应用到当前旋转 (delta_rotation * current_rotation)
-        # 注意：先应用当前旋转，再应用增量旋转
-        new_rotation = delta_rotation * current_rotation
-        
-        # 将新旋转转换为欧拉角（度数）
-        new_euler_angles = new_rotation.as_euler('XYZ', degrees=True)
-
+        # 获取当前的世界矩阵和位置
         world_matrix = self._get_world_matrix(geometry)
         world_position = world_matrix[:3, 3]
+        
+        # 确定全局旋转轴和旋转中心
         if self._controller_axis == 'x':
-            axis_index = 0
-            global_axis_dir = np.array([1, 0, 0])
+            global_axis = np.array([1, 0, 0])
         elif self._controller_axis == 'y':
-            axis_index = 1
-            global_axis_dir = np.array([0, 1, 0])
+            global_axis = np.array([0, 1, 0])
         elif self._controller_axis == 'z':
-            axis_index = 2
-            global_axis_dir = np.array([0, 0, 1])
+            global_axis = np.array([0, 0, 1])
         else:
-            return    
-        # 确定旋转轴在空间中的位置 - 通过物体位置的全局轴
-        # 创建一个点，该点位于全局轴上并且与物体世界位置在其他两个轴上的坐标相同
+            return
         
-        # 以下是旋转中心的关键修改
-        # 旋转轴是通过物体位置的对应全局轴
-        # 例如：如果是X轴，旋转轴是通过点(world_position[0], 0, 0)的线
-        # 我们需要计算物体到这条轴的垂直向量
+        # 创建全局旋转矩阵
+        global_rotation = R.from_rotvec(global_axis * angle_rad)
         
-        # 计算物体到旋转轴的垂直距离向量
-        perpendicular_vector = np.copy(world_position)
-        perpendicular_vector[axis_index] = 0  # 将轴方向上的分量置为0，得到垂直于轴的向量
-        global_rotation = R.from_rotvec(global_axis_dir * angle_rad)
-      
-        # 应用旋转到这个垂直向量
-        rotated_perpendicular = global_rotation.apply(perpendicular_vector)
+        # 获取当前的世界旋转
+        current_world_rotation = R.from_matrix(world_matrix[:3, :3])
         
-        # 计算新的世界位置（保持在轴方向上的坐标不变）
-        new_world_position = np.copy(rotated_perpendicular)
-        new_world_position[axis_index] = world_position[axis_index]  # 保持在旋转轴方向上的坐标不变
-
+        # 计算新的世界旋转
+        new_world_rotation = global_rotation * current_world_rotation
         
-        # 更新几何体的旋转属性
-        geometry.rotation = new_euler_angles.tolist()
-        geometry.position = new_world_position.tolist()
+        # 计算新的世界位置（绕全局轴旋转）
+        new_world_position = global_rotation.apply(world_position)
+        
+        if geometry.parent is not None:
+            # 获取父对象的世界矩阵
+            parent_world_matrix = self._get_world_matrix(geometry.parent)
+            parent_inverse = np.linalg.inv(parent_world_matrix)
+            
+            # 将新的世界位置转换到局部坐标系
+            temp_pos = np.append(new_world_position, 1.0)
+            local_pos_homogeneous = np.dot(parent_inverse, temp_pos)
+            new_local_position = local_pos_homogeneous[:3]
+            
+            # 计算局部旋转
+            parent_rotation = R.from_matrix(parent_world_matrix[:3, :3])
+            local_rotation = parent_rotation.inv() * new_world_rotation
+            new_euler_angles = local_rotation.as_euler('XYZ', degrees=True)
+            
+            # 更新几何体的位置和旋转
+            geometry.position = new_local_position.tolist()
+            geometry.rotation = new_euler_angles.tolist()
+        else:
+            # 如果没有父节点，直接使用世界坐标
+            geometry.position = new_world_position.tolist()
+            geometry.rotation = new_world_rotation.as_euler('XYZ', degrees=True).tolist()
 
     def _handle_scale_drag(self, geometry, dx, dy):
         """处理缩放拖动"""
@@ -1581,6 +1629,10 @@ class OpenGLView(QOpenGLWidget):
         
         # 通知视图模型对象已更改
         self._scene_viewmodel.notify_object_changed(geometry)
+        
+        # 在拖动完成后触发状态记录
+        if hasattr(self._scene_viewmodel, 'control_viewmodel'):
+            self._scene_viewmodel.control_viewmodel._on_geometry_modified()
 
     def _handle_local_scale(self, geometry, scale_factor):
         """
@@ -2107,14 +2159,9 @@ class OpenGLView(QOpenGLWidget):
             4x4 世界变换矩阵
         """
         # 如果对象没有父对象，直接返回其变换矩阵
-        if not hasattr(geometry, 'parent') or geometry.parent is None:
-            return geometry.transform_matrix.copy()
+        return geometry.transform_matrix.copy()
         
-        # 递归获取父对象的世界变换矩阵
-        parent_world_matrix = self._get_world_matrix(geometry.parent)
-        
-        # 应用父对象的变换，然后是当前对象的变换
-        return parent_world_matrix @ geometry.transform_matrix
+
 
     def _world_to_local_matrix(self, world_matrix, geometry):
         """
