@@ -1434,6 +1434,11 @@ class OpenGLView(QOpenGLWidget):
             
         # 计算平移向量（沿全局轴方向）
         translation_vector = global_axis * drag_amount
+        if   self._controller_axis == 'z':
+            translation_vector = translation_vector
+        else:
+            translation_vector = -translation_vector
+
         
         # 获取当前的世界矩阵
         world_matrix = self._get_world_matrix(geometry)
@@ -1455,7 +1460,7 @@ class OpenGLView(QOpenGLWidget):
             x_axis = parent_rotation[:, 0]  # 父类旋转后的X轴
             y_axis = parent_rotation[:, 1]  # 父类旋转后的Y轴
             z_axis = parent_rotation[:, 2]  # 父类旋转后的Z轴
-            print(x_axis,y_axis,z_axis)
+            # print(x_axis,y_axis,z_axis)
             # 计算投影分量（点积）
             x_component = np.dot(translation_vector, x_axis)
             y_component = np.dot(translation_vector, y_axis)
@@ -1463,19 +1468,19 @@ class OpenGLView(QOpenGLWidget):
             
             # 使用投影分量作为新的局部平移向量
             local_translation = [x_component, y_component, z_component]
-            print("local",x_component,y_component,z_component)
-            print(translation_vector[0],translation_vector[1],translation_vector[2])
+            # print("local",x_component,y_component,z_component)
+            # print(translation_vector[0],translation_vector[1],translation_vector[2])
             # 计算新的局部位置
             new_position = [
-                current_geometry_pos[0] - local_translation[0],
-                current_geometry_pos[1] - local_translation[1],
+                current_geometry_pos[0] + local_translation[0],
+                current_geometry_pos[1] + local_translation[1],
                 current_geometry_pos[2] + local_translation[2]
             ]
         else:
             # 如果没有父对象，直接使用全局平移向量
             new_position = [
-                current_geometry_pos[0] - translation_vector[0],
-                current_geometry_pos[1] - translation_vector[1],
+                current_geometry_pos[0] + translation_vector[0],
+                current_geometry_pos[1] + translation_vector[1],
                 current_geometry_pos[2] + translation_vector[2]
             ]
         
