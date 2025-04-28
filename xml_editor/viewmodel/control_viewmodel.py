@@ -467,19 +467,30 @@ class ControlViewModel(QObject):
             # 删除所有历史文件
             for file_path in self._history_files:
                 if os.path.exists(file_path):
-                    os.remove(file_path)
+                    try:
+                        os.remove(file_path)
+                    except Exception as e:
+                        print(f"删除文件失败: {file_path} - {str(e)}")
+            
+            # 清除历史目录中的所有文件（以防有未包含在self._history_files中的文件）
+            if os.path.exists(self._undo_redo_dir):
+                for file_name in os.listdir(self._undo_redo_dir):
+                    file_path = os.path.join(self._undo_redo_dir, file_name)
+                    if os.path.isfile(file_path) and file_path.endswith('.json'):
+                        try:
+                            os.remove(file_path)
+                        except Exception as e:
+                            print(f"删除额外文件失败: {file_path} - {str(e)}")
             
             # 重置历史记录
             self._history_files = []
             self._current_history_index = -1
             
-            # 记录当前状态作为新的初始状态
-            self._record_operation_state()
-            
             # 更新撤销/重做状态
             self.undoStateChanged.emit(False)
             self.redoStateChanged.emit(False)
             
+            print("历史记录已清除")
             return True
         except Exception as e:
             print(f"清除历史记录失败: {str(e)}")

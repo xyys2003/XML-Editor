@@ -372,12 +372,18 @@ class MainWindow(QMainWindow):
             
             if reply == QMessageBox.Save:
                 self._save_file()
+                # 保存完成后清理历史记录
+                self.control_viewmodel.clear_history()
                 event.accept()
             elif reply == QMessageBox.Discard:
+                # 不保存但仍需清理历史记录
+                self.control_viewmodel.clear_history()
                 event.accept()
             else:
                 event.ignore()
         else:
+            # 没有几何体也需要清理历史记录
+            self.control_viewmodel.clear_history()
             event.accept()
 
 
