@@ -44,8 +44,8 @@
 
 1. 克隆仓库：
    ```
-   git clone https://github.com/xyys2003/xml-editor.git
-   cd xml-editor
+   git clone https://github.com/xyys2003/XML-Editor.git
+   cd XML-Editor
    ```
 
 2. 安装依赖：
