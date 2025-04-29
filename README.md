@@ -53,15 +53,6 @@
    pip install -r requirements.txt
    ```
 
-   或直接安装包：
-   ```
-   pip install .
-   ```
-
-   开发模式安装：
-   ```
-   pip install -e .
-   ```
 
 ## 使用说明
 
