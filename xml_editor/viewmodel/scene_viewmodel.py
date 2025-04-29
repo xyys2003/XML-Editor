@@ -27,6 +27,12 @@ class SceneViewModel(QObject):
     operationModeChanged = pyqtSignal(object)  # 操作模式变化
     objectChanged = pyqtSignal(object)  # 对象属性变化
     coordinateSystemChanged = pyqtSignal(bool)  # 坐标系变化信号
+    geometryAdded = pyqtSignal(object)  # 几何体添加信号
+    geometryDeleted = pyqtSignal(object)  # 几何体删除信号
+    geometryChanged = pyqtSignal(object)  # 几何体变化信号
+    positionChanged = pyqtSignal(object)  # 位置变化信号
+    rotationChanged = pyqtSignal(object)  # 旋转变化信号
+    scaleChanged = pyqtSignal(object)     # 缩放变化信号
     
     def __init__(self):
         super().__init__()
@@ -42,6 +48,7 @@ class SceneViewModel(QObject):
             'projection_matrix': np.eye(4)
         }
         self._use_local_coords = True
+        self.hierarchyViewModel = None  # 添加 hierarchyViewModel 属性
     
     @property
     def geometries(self):
@@ -73,7 +80,7 @@ class SceneViewModel(QObject):
         if self._selected_geo:
             self._selected_geo.selected = True
         
-        # 发出信号
+        # 发出选择变化信号 - 但不触发几何体变化信号
         self.selectionChanged.emit(self._selected_geo)
     
     @property
@@ -226,6 +233,8 @@ class SceneViewModel(QObject):
         
         # 触发更新
         self.geometriesChanged.emit()
+        self.geometryDeleted.emit(geometry)
+        print(f"发射了 geometryDeleted 信号: {geometry.name}")
     
     def select_at(self, screen_x, screen_y, viewport_width, viewport_height):
         """
@@ -523,6 +532,8 @@ class SceneViewModel(QObject):
         
         # 发出场景变化信号
         self.geometriesChanged.emit()
+        self.geometryAdded.emit(geometry)
+        print(f"发射了 geometryAdded 信号: {geometry.name}")
         
         return geometry
     
@@ -542,6 +553,8 @@ class SceneViewModel(QObject):
             
             # 通知对象已更改
             self.notify_object_changed(geometry)
+            self.geometryChanged.emit(geometry)
+            print(f"发射了 geometryChanged 信号: {geometry.name}")
     
     def get_serializable_geometries(self):
         """
@@ -607,13 +620,15 @@ class SceneViewModel(QObject):
             bool: 加载是否成功
         """
         try:
+            print("开始加载几何体数据...")
+            
             # 检查数据版本兼容性
             if 'version' not in data:
                 print("无法识别的数据格式")
                 return False
             
             # 清除当前场景中的所有几何体
-            self.clear_scene()
+            self._geometries = []
             
             # 创建ID到几何体的映射，用于处理父子关系
             id_to_geo = {}
@@ -708,6 +723,9 @@ class SceneViewModel(QObject):
             # 更新射线投射器
             self._update_raycaster()
             
+            # 清除当前选择
+            self.clear_selection()
+            
             # 通知视图更新
             self.geometriesChanged.emit()
             
@@ -716,6 +734,8 @@ class SceneViewModel(QObject):
             return loaded_count > 0
         except Exception as e:
             print(f"加载几何体数据失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def clear_scene(self):
@@ -723,4 +743,40 @@ class SceneViewModel(QObject):
         清除场景中的所有几何体
         """
         self._geometries = []
-        self.geometriesChanged.emit() 
+        self.geometriesChanged.emit()
+    
+    def notifyPositionChanged(self, geometry):
+        """通知几何体位置变化"""
+        self.positionChanged.emit(geometry)
+        self.objectChanged.emit(geometry)
+    
+    def notifyRotationChanged(self, geometry):
+        """通知几何体旋转变化"""
+        self.rotationChanged.emit(geometry)
+        self.objectChanged.emit(geometry)
+    
+    def notifyScaleChanged(self, geometry):
+        """通知几何体缩放变化"""
+        self.scaleChanged.emit(geometry)
+        self.objectChanged.emit(geometry)
+    
+    def notify_object_changed(self, geometry):
+        """通知几何体对象变化"""
+        self.objectChanged.emit(geometry)
+        self.geometryChanged.emit(geometry)
+    
+    def set_hierarchy_viewmodel(self, hierarchy_viewmodel):
+        """设置层级视图模型的引用"""
+        self.hierarchyViewModel = hierarchy_viewmodel
+
+    def refresh_hierarchy_tree(self):
+        """请求刷新层级树"""
+        if hasattr(self, 'hierarchyViewModel') and self.hierarchyViewModel:
+            # 只发出信号，让信号的接收者决定如何刷新
+            self.geometriesChanged.emit()
+
+            self.hierarchyViewModel.hierarchyChanged.emit()
+
+    # 然后在初始化代码中连接它们
+    # hierarchy_viewmodel = HierarchyViewModel(scene_viewmodel)
+    # scene_viewmodel.set_hierarchy_viewmodel(hierarchy_viewmodel) 

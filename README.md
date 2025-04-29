@@ -44,8 +44,8 @@
 
 1. 克隆仓库：
    ```
-   git clone https://github.com/yourusername/xml-editor.git
-   cd xml-editor
+   git clone https://github.com/xyys2003/XML-Editor.git
+   cd XML-Editor
    ```
 
 2. 安装依赖：
@@ -53,15 +53,6 @@
    pip install -r requirements.txt
    ```
 
-   或直接安装包：
-   ```
-   pip install .
-   ```
-
-   开发模式安装：
-   ```
-   pip install -e .
-   ```
 
 ## 使用说明
 

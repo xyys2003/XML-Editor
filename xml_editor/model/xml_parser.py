@@ -543,6 +543,9 @@ class XMLParser:
             elif obj.type in [GeometryType.CYLINDER.value, GeometryType.CAPSULE.value]:
                 # 圆柱/胶囊：第一个尺寸为半径，第三个尺寸为半高
                 geom_elem.set("size", f"{obj.size[0]} {obj.size[2]}")
+            elif obj.type == "plane":
+                # 平面：使用固定尺寸 0 0 0.01
+                geom_elem.set("size", "0 0 0.01")
             else:
                 # 其他几何体：使用所有尺寸
                 geom_elem.set("size", f"{obj.size[0]} {obj.size[1]} {obj.size[2]}")

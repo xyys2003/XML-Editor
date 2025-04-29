@@ -318,8 +318,7 @@ class HierarchyTree(QTreeWidget):
                 else:
                     create_menu = None
                 
-                # 通用操作
-                rename_action = menu.addAction("重命名")
+                # 通用操作 - 移除重命名选项
                 delete_action = menu.addAction("删除")
                 menu.addSeparator()
                 copy_action = menu.addAction("复制")
@@ -391,9 +390,7 @@ class HierarchyTree(QTreeWidget):
         
         # 处理单项操作
         if clicked_item and len(selected_geometries) <= 1:
-            if action == rename_action:
-                self.editItem(clicked_item)
-            elif action == delete_action:
+            if action == delete_action:
                 geometry = self._get_geometry_from_item(clicked_item)
                 if geometry:
                     self._hierarchy_viewmodel.remove_geometry(geometry)

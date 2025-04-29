@@ -294,7 +294,8 @@ class ControlPanel(QWidget):
         加载完成后的处理
         """
         if success:
-            QMessageBox.information(self, "加载成功", "几何体存档已成功加载")
+            # QMessageBox.information(self, "加载成功", "几何体存档已成功加载")
+            pass
         else:
             QMessageBox.warning(self, "加载失败", "无法加载几何体存档，请检查文件格式")
 
@@ -410,7 +411,7 @@ class SavesDialog(QDialog):
                 
                 # 显示结果
                 if success:
-                    QMessageBox.information(self, "加载成功", "几何体存档已成功加载")
+                    # QMessageBox.information(self, "加载成功", "几何体存档已成功加载")
                     self.selected_save = save_path
                     self.accept()
                 else:
