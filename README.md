@@ -44,7 +44,7 @@
 
 1. 克隆仓库：
    ```
-   git clone https://github.com/yourusername/xml-editor.git
+   git clone https://github.com/xyys2003/xml-editor.git
    cd xml-editor
    ```
 
