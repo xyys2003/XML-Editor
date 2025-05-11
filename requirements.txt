@@ -4,10 +4,3 @@ PyOpenGL>=3.1.0
 PyOpenGL_accelerate>=3.1.0
 numpy>=1.20.0
 scipy>=1.7.0
-
-# 可选依赖（提高性能）
-# PyOpenGL_accelerate>=3.1.0  # 取消注释以启用性能优化
-
-# 开发依赖（测试、文档等）
-pytest>=7.0.0  # 测试框架
-pylint>=2.12.0  # 代码静态检查 
